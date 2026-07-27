@@ -224,6 +224,16 @@ def run_mathematical_validation(
     metrics["common_phase_stokes_invariance_error"] = float(
         np.max(np.abs(gamma_stokes - gamma_stokes[0]))
     )
+    chapter_one_stokes = np.concatenate(
+        [
+            arrays[f"{stage}_stokes"]
+            for stage in ("landmark", "ellipticity", "orientation", "phase")
+        ],
+        axis=0,
+    )
+    metrics["chapter1_unit_stokes_error"] = float(
+        np.max(np.abs(np.linalg.norm(chapter_one_stokes, axis=-1) - 1.0))
+    )
 
     fast_phase = arrays["fast_phase"]
     north = hodograph_from_spinor(

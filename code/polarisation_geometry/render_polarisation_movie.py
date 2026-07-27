@@ -22,7 +22,7 @@ mpl.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, FancyArrowPatch
+from matplotlib.patches import Circle, FancyArrowPatch, Polygon
 import numpy as np
 from PIL import Image
 
@@ -35,8 +35,15 @@ BLUE = "#1f77b4"
 RED = "#d62728"
 GREY = "0.62"
 BLACK = "0.08"
+ANGLE_GREEN = "#30664e"
+ANGLE_GREEN_FILL = "#cae1b3"
+ANGLE_BLUE = "#1c588c"
+ANGLE_BLUE_FILL = "#bbc9db"
+ANGLE_ORANGE = "#b85900"
+ANGLE_ORANGE_FILL = "#fcd7b3"
 CAMERA_AZIMUTH = 110.75
 CAMERA_ELEVATION = 30.85
+CHAPTER_ONE_PHASE_PERIOD_SECONDS = 7.0
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -268,6 +275,15 @@ def plain_dynamic_text(text: mpl.text.Text) -> mpl.text.Text:
 
 
 @dataclass
+class AngleArcArtists:
+    """Mutable filled arc and mathematical label."""
+
+    fill: Polygon
+    arc: Line2D
+    label: mpl.text.Text
+
+
+@dataclass
 class ChapterOneArtists:
     """Mutable artists for the two-panel mapping chapter."""
 
@@ -279,10 +295,74 @@ class ChapterOneArtists:
     stokes_marker: Line2D
     hodograph: Line2D
     hodograph_marker: Line2D
+    phase_arrow: FancyArrowPatch
     major_axis: Line2D
+    sphere_lambda: AngleArcArtists
+    sphere_varphi: AngleArcArtists
+    sphere_gamma: AngleArcArtists
+    sphere_gamma_ring: Line2D
+    hodograph_lambda_half: AngleArcArtists
+    hodograph_varphi_half: AngleArcArtists
+    hodograph_gamma: AngleArcArtists
+    ellipticity_chord: Line2D
+    spinor_top: mpl.text.Text
+    spinor_bottom: mpl.text.Text
     subtitle: mpl.text.Text
     explanation: mpl.text.Text
     parameter_text: mpl.text.Text
+
+
+def make_angle_arc(
+    axis: mpl.axes.Axes,
+    *,
+    edge_color: str,
+    fill_color: str,
+    label: str,
+    zorder: float,
+    fill_alpha: float = 0.70,
+) -> AngleArcArtists:
+    """Create one initially empty filled angle arc."""
+    fill = Polygon(
+        np.zeros((3, 2)),
+        closed=True,
+        facecolor=fill_color,
+        edgecolor="none",
+        alpha=fill_alpha,
+        zorder=zorder,
+    )
+    axis.add_patch(fill)
+    (arc,) = axis.plot(
+        [],
+        [],
+        color=edge_color,
+        linewidth=2.0,
+        zorder=zorder + 0.2,
+    )
+    text = axis.text(
+        0.0,
+        0.0,
+        label,
+        ha="center",
+        va="center",
+        fontsize=18,
+        color=BLACK,
+        zorder=zorder + 0.4,
+    )
+    return AngleArcArtists(fill=fill, arc=arc, label=text)
+
+
+def set_angle_arc(
+    artists: AngleArcArtists,
+    center: np.ndarray,
+    arc_points: np.ndarray,
+    label_position: np.ndarray,
+) -> None:
+    """Update one filled arc from display-coordinate points."""
+    center = np.asarray(center, dtype=float)
+    arc_points = np.asarray(arc_points, dtype=float)
+    artists.fill.set_xy(np.vstack([center, arc_points, center]))
+    artists.arc.set_data(arc_points[:, 0], arc_points[:, 1])
+    artists.label.set_position(tuple(label_position))
 
 
 def make_chapter_one(
@@ -298,15 +378,20 @@ def make_chapter_one(
         FigureCanvasAgg(figure)
         grid = figure.add_gridspec(
             1,
-            2,
-            left=0.055,
-            right=0.965,
+            3,
+            width_ratios=(1.0, 0.48, 1.0),
+            left=0.035,
+            right=0.975,
             bottom=0.14,
             top=0.80,
-            wspace=0.20,
+            wspace=0.035,
         )
         sphere_axis = figure.add_subplot(grid[0, 0])
-        hodograph_axis = figure.add_subplot(grid[0, 1])
+        spinor_axis = figure.add_subplot(grid[0, 1])
+        hodograph_axis = figure.add_subplot(grid[0, 2])
+        spinor_axis.set_axis_off()
+        spinor_axis.set_xlim(0.0, 1.0)
+        spinor_axis.set_ylim(0.0, 1.0)
         draw_poincare_sphere(
             sphere_axis,
             limit=1.55,
@@ -316,6 +401,16 @@ def make_chapter_one(
         draw_hodograph_axes(hodograph_axis, limit=1.55, ticks=False)
         sphere_axis.set_title("Stokes-Poincare representation", pad=15)
         hodograph_axis.set_title("Horizontal velocity hodograph", pad=15)
+        sphere_axis.text(
+            -1.43,
+            -1.34,
+            r"$\left|\widehat{\mathbf{S}}\right|=1$",
+            ha="left",
+            va="center",
+            fontsize=17,
+            color="0.20",
+            zorder=10,
+        )
 
         (stokes_trail,) = sphere_axis.plot(
             [],
@@ -364,6 +459,18 @@ def make_chapter_one(
             linestyle="None",
             zorder=6,
         )
+        phase_arrow = FancyArrowPatch(
+            (0.0, 0.0),
+            (0.0, 0.0),
+            arrowstyle="-|>",
+            mutation_scale=18,
+            linewidth=2.3,
+            color=ANGLE_BLUE,
+            shrinkA=0.0,
+            shrinkB=5.5,
+            zorder=5,
+        )
+        hodograph_axis.add_patch(phase_arrow)
         (major_axis,) = hodograph_axis.plot(
             [],
             [],
@@ -371,6 +478,146 @@ def make_chapter_one(
             linestyle=(0, (4.0, 3.0)),
             linewidth=1.2,
             zorder=2,
+        )
+        sphere_lambda = make_angle_arc(
+            sphere_axis,
+            edge_color=ANGLE_GREEN,
+            fill_color=ANGLE_GREEN_FILL,
+            label=r"$\lambda$",
+            zorder=5.1,
+        )
+        sphere_varphi = make_angle_arc(
+            sphere_axis,
+            edge_color=ANGLE_ORANGE,
+            fill_color=ANGLE_ORANGE_FILL,
+            label=r"$\varphi$",
+            zorder=5.3,
+        )
+        sphere_gamma = make_angle_arc(
+            sphere_axis,
+            edge_color=ANGLE_BLUE,
+            fill_color=ANGLE_BLUE_FILL,
+            label=r"$\gamma$",
+            zorder=9.2,
+        )
+        (sphere_gamma_ring,) = sphere_axis.plot(
+            [],
+            [],
+            color="0.20",
+            linewidth=1.1,
+            zorder=9.0,
+        )
+        hodograph_lambda_half = make_angle_arc(
+            hodograph_axis,
+            edge_color=ANGLE_GREEN,
+            fill_color=ANGLE_GREEN_FILL,
+            label=r"$\lambda/2$",
+            zorder=3.2,
+        )
+        hodograph_varphi_half = make_angle_arc(
+            hodograph_axis,
+            edge_color=ANGLE_ORANGE,
+            fill_color=ANGLE_ORANGE_FILL,
+            label=r"$\varphi/2$",
+            zorder=4.4,
+        )
+        hodograph_gamma = make_angle_arc(
+            hodograph_axis,
+            edge_color=ANGLE_BLUE,
+            fill_color=ANGLE_BLUE_FILL,
+            label=r"$\gamma$",
+            zorder=2.5,
+            fill_alpha=0.18,
+        )
+        (ellipticity_chord,) = hodograph_axis.plot(
+            [],
+            [],
+            color=RED,
+            linewidth=2.5,
+            zorder=4.2,
+        )
+
+        spinor_axis.text(
+            0.5,
+            0.86,
+            r"$\left|\mathscr{A}\right\rangle=$",
+            ha="center",
+            va="center",
+            fontsize=20,
+        )
+        spinor_axis.text(
+            0.12,
+            0.625,
+            "(",
+            ha="center",
+            va="center",
+            fontsize=78,
+            color=BLACK,
+        )
+        spinor_axis.text(
+            0.88,
+            0.625,
+            ")",
+            ha="center",
+            va="center",
+            fontsize=78,
+            color=BLACK,
+        )
+        spinor_top = plain_dynamic_text(
+            spinor_axis.text(
+                0.5,
+                0.685,
+                "",
+                ha="center",
+                va="center",
+                fontsize=14,
+                color=BLACK,
+            )
+        )
+        spinor_bottom = plain_dynamic_text(
+            spinor_axis.text(
+                0.5,
+                0.565,
+                "",
+                ha="center",
+                va="center",
+                fontsize=14,
+                color=BLACK,
+            )
+        )
+        spinor_axis.text(
+            0.5,
+            0.355,
+            r"$\phi=u+\mathrm{i}v$",
+            ha="center",
+            va="center",
+            fontsize=17,
+        )
+        spinor_axis.text(
+            0.5,
+            0.265,
+            r"$=\mathscr{A}_\uparrow\mathrm{e}^{-\mathrm{i}ft}$",
+            ha="center",
+            va="center",
+            fontsize=15,
+        )
+        spinor_axis.text(
+            0.5,
+            0.195,
+            r"$+\mathscr{A}_\downarrow\mathrm{e}^{\mathrm{i}ft}$",
+            ha="center",
+            va="center",
+            fontsize=15,
+        )
+        spinor_axis.text(
+            0.5,
+            0.075,
+            r"$\left|\mathscr{A}\right\rangle"
+            r":=(\mathscr{A}_\uparrow,\mathscr{A}_\downarrow^\ast)^{\mathsf{T}}$",
+            ha="center",
+            va="center",
+            fontsize=12.5,
+            color="0.25",
         )
 
         figure.text(
@@ -417,7 +664,18 @@ def make_chapter_one(
         stokes_marker=stokes_marker,
         hodograph=hodograph,
         hodograph_marker=hodograph_marker,
+        phase_arrow=phase_arrow,
         major_axis=major_axis,
+        sphere_lambda=sphere_lambda,
+        sphere_varphi=sphere_varphi,
+        sphere_gamma=sphere_gamma,
+        sphere_gamma_ring=sphere_gamma_ring,
+        hodograph_lambda_half=hodograph_lambda_half,
+        hodograph_varphi_half=hodograph_varphi_half,
+        hodograph_gamma=hodograph_gamma,
+        ellipticity_chord=ellipticity_chord,
+        spinor_top=spinor_top,
+        spinor_bottom=spinor_bottom,
         subtitle=subtitle,
         explanation=explanation,
         parameter_text=parameter_text,
@@ -695,16 +953,20 @@ def set_chapter_one_frame(
     stage: str,
     index: int,
     *,
+    phase_angle: float,
     landmark_label: str | None = None,
 ) -> None:
     """Update the two-panel mapping layout from saved arrays."""
     stokes = arrays[f"{stage}_stokes"]
     hodographs = arrays[f"{stage}_hodograph"]
+    spinors = arrays[f"{stage}_spinor"]
     varphi = arrays[f"{stage}_varphi"]
     longitude = arrays[f"{stage}_lambda"]
     gamma = arrays[f"{stage}_gamma"]
-    current_stokes = stokes[index]
-    projected, _ = project_stokes(stokes[: index + 1])
+    trail_norms = np.linalg.norm(stokes[: index + 1], axis=-1, keepdims=True)
+    unit_trail = stokes[: index + 1] / trail_norms
+    current_stokes = unit_trail[-1]
+    projected, _ = project_stokes(unit_trail)
     endpoint, _ = project_stokes(current_stokes[None, :])
     endpoint = endpoint[0]
     artists.stokes_trail.set_data(projected[:, 0], projected[:, 1])
@@ -712,11 +974,17 @@ def set_chapter_one_frame(
     artists.stokes_marker.set_data([endpoint[0]], [endpoint[1]])
 
     values = hodographs[index]
-    artists.hodograph.set_data(np.real(values), np.imag(values))
-    artists.hodograph_marker.set_data(
-        [np.real(values[0])],
-        [np.imag(values[0])],
+    fast_phase = arrays["fast_phase"]
+    target_phase = float((gamma[index] + phase_angle) % (2.0 * np.pi))
+    phase_difference = np.angle(np.exp(1j * (fast_phase - target_phase)))
+    phase_index = int(np.argmin(np.abs(phase_difference)))
+    marker = np.array(
+        [np.real(values[phase_index]), np.imag(values[phase_index])],
+        dtype=float,
     )
+    artists.hodograph.set_data(np.real(values), np.imag(values))
+    artists.hodograph_marker.set_data([marker[0]], [marker[1]])
+    artists.phase_arrow.set_positions((0.0, 0.0), tuple(marker))
     orientation = longitude[index] / 2.0
     guide = 1.45 * np.array([np.cos(orientation), np.sin(orientation)])
     if abs(abs(varphi[index]) - np.pi / 2.0) < 0.02:
@@ -727,6 +995,206 @@ def set_chapter_one_frame(
             [-guide[0], guide[0]],
             [-guide[1], guide[1]],
         )
+
+    # Left panel: longitude and latitude are drawn as projected spherical
+    # sectors, while the phase is a local tangent-plane sector at S-hat.
+    lambda_display = float(longitude[index] % (2.0 * np.pi))
+    lambda_theta = np.linspace(0.0, lambda_display, 121)
+    lambda_radius = 0.34
+    lambda_points_3d = lambda_radius * np.column_stack(
+        [
+            np.cos(lambda_theta),
+            np.sin(lambda_theta),
+            np.zeros_like(lambda_theta),
+        ]
+    )
+    lambda_points, _ = project_stokes(lambda_points_3d)
+    lambda_label_3d = 0.46 * np.array(
+        [
+            np.cos(0.5 * lambda_display),
+            np.sin(0.5 * lambda_display),
+            0.0,
+        ]
+    )
+    lambda_label, _ = project_stokes(lambda_label_3d[None, :])
+    set_angle_arc(
+        artists.sphere_lambda,
+        np.zeros(2),
+        lambda_points,
+        lambda_label[0],
+    )
+
+    latitude_theta = np.linspace(0.0, float(varphi[index]), 121)
+    varphi_radius = 0.43
+    varphi_points_3d = varphi_radius * np.column_stack(
+        [
+            np.cos(latitude_theta) * np.cos(longitude[index]),
+            np.cos(latitude_theta) * np.sin(longitude[index]),
+            np.sin(latitude_theta),
+        ]
+    )
+    varphi_points, _ = project_stokes(varphi_points_3d)
+    varphi_label_3d = 0.57 * np.array(
+        [
+            np.cos(0.5 * varphi[index]) * np.cos(longitude[index]),
+            np.cos(0.5 * varphi[index]) * np.sin(longitude[index]),
+            np.sin(0.5 * varphi[index]),
+        ]
+    )
+    varphi_label, _ = project_stokes(varphi_label_3d[None, :])
+    set_angle_arc(
+        artists.sphere_varphi,
+        np.zeros(2),
+        varphi_points,
+        varphi_label[0],
+    )
+
+    reference_axis = np.array([0.0, 0.0, 1.0])
+    tangent_a = np.cross(reference_axis, current_stokes)
+    if np.linalg.norm(tangent_a) < 1.0e-8:
+        tangent_a = np.array([1.0, 0.0, 0.0])
+    tangent_a /= np.linalg.norm(tangent_a)
+    tangent_b = np.cross(current_stokes, tangent_a)
+    tangent_b /= np.linalg.norm(tangent_b)
+    phase_direction = -1.0 if current_stokes[2] >= 0.0 else 1.0
+    directed_phase = phase_direction * phase_angle
+    gamma_radius = 0.15
+    gamma_theta = np.linspace(0.0, directed_phase, 121)
+    gamma_points_3d = current_stokes + gamma_radius * (
+        np.cos(gamma_theta)[:, None] * tangent_a
+        + np.sin(gamma_theta)[:, None] * tangent_b
+    )
+    gamma_points, _ = project_stokes(gamma_points_3d)
+    gamma_center = endpoint
+    gamma_label_angle = 0.5 * directed_phase
+    if abs(directed_phase) < 0.16:
+        gamma_label_angle = 0.18 * phase_direction
+    gamma_label_3d = current_stokes + 1.55 * gamma_radius * (
+        np.cos(gamma_label_angle) * tangent_a
+        + np.sin(gamma_label_angle) * tangent_b
+    )
+    gamma_label, _ = project_stokes(gamma_label_3d[None, :])
+    set_angle_arc(
+        artists.sphere_gamma,
+        gamma_center,
+        gamma_points,
+        gamma_label[0],
+    )
+    ring_theta = np.linspace(0.0, 2.0 * np.pi, 181)
+    ring_points_3d = current_stokes + gamma_radius * (
+        np.cos(ring_theta)[:, None] * tangent_a
+        + np.sin(ring_theta)[:, None] * tangent_b
+    )
+    ring_points, _ = project_stokes(ring_points_3d)
+    artists.sphere_gamma_ring.set_data(ring_points[:, 0], ring_points[:, 1])
+
+    # Right panel: use the same three-angle construction as the manuscript
+    # reference.  The phase ray ends at the white instantaneous marker.
+    lambda_half_theta = np.linspace(0.0, orientation, 121)
+    lambda_half_radius = 0.40
+    lambda_half_points = lambda_half_radius * np.column_stack(
+        [np.cos(lambda_half_theta), np.sin(lambda_half_theta)]
+    )
+    lambda_half_label_angle = 0.5 * orientation
+    lambda_half_label = 1.38 * lambda_half_radius * np.array(
+        [np.cos(lambda_half_label_angle), np.sin(lambda_half_label_angle)]
+    )
+    set_angle_arc(
+        artists.hodograph_lambda_half,
+        np.zeros(2),
+        lambda_half_points,
+        lambda_half_label,
+    )
+
+    cosine_latitude = max(float(np.cos(varphi[index])), 0.0)
+    semi_major = np.sqrt(1.0 + cosine_latitude)
+    semi_minor = np.sqrt(max(1.0 - cosine_latitude, 0.0))
+    major_direction = np.array([np.cos(orientation), np.sin(orientation)])
+    minor_direction = np.array([-np.sin(orientation), np.cos(orientation)])
+    latitude_sign = 1.0 if varphi[index] >= 0.0 else -1.0
+    major_negative = -semi_major * major_direction
+    minor_endpoint = -latitude_sign * semi_minor * minor_direction
+    chord_direction = minor_endpoint - major_negative
+    chord_angle = float(
+        np.arctan2(
+            major_direction[0] * chord_direction[1]
+            - major_direction[1] * chord_direction[0],
+            np.dot(major_direction, chord_direction),
+        )
+    )
+    varphi_half_radius = 0.25 * semi_major
+    varphi_half_theta = np.linspace(
+        orientation,
+        orientation + chord_angle,
+        101,
+    )
+    varphi_half_points = major_negative + varphi_half_radius * np.column_stack(
+        [np.cos(varphi_half_theta), np.sin(varphi_half_theta)]
+    )
+    varphi_half_label_angle = orientation + 0.5 * chord_angle
+    varphi_half_label = major_negative + 1.42 * varphi_half_radius * np.array(
+        [np.cos(varphi_half_label_angle), np.sin(varphi_half_label_angle)]
+    )
+    if abs(chord_angle) < 0.08:
+        varphi_half_label += 0.16 * minor_direction
+    set_angle_arc(
+        artists.hodograph_varphi_half,
+        major_negative,
+        varphi_half_points,
+        varphi_half_label,
+    )
+    artists.ellipticity_chord.set_data(
+        [major_negative[0], minor_endpoint[0]],
+        [major_negative[1], minor_endpoint[1]],
+    )
+
+    marker_angle = float(np.arctan2(marker[1], marker[0]))
+    raw_gamma_delta = float(
+        np.arctan2(
+            np.sin(marker_angle - orientation),
+            np.cos(marker_angle - orientation),
+        )
+    )
+    if phase_angle < 1.0e-10:
+        gamma_delta = 0.0
+    elif phase_direction < 0.0:
+        gamma_delta = -float((-raw_gamma_delta) % (2.0 * np.pi))
+    else:
+        gamma_delta = float(raw_gamma_delta % (2.0 * np.pi))
+    hodograph_gamma_radius = 0.54
+    hodograph_gamma_theta = np.linspace(
+        orientation,
+        orientation + gamma_delta,
+        181,
+    )
+    hodograph_gamma_points = hodograph_gamma_radius * np.column_stack(
+        [np.cos(hodograph_gamma_theta), np.sin(hodograph_gamma_theta)]
+    )
+    hodograph_gamma_label_angle = orientation + 0.35 * gamma_delta
+    if abs(gamma_delta) < 0.16:
+        hodograph_gamma_label_angle = orientation + 0.20 * phase_direction
+    hodograph_gamma_label = 1.62 * hodograph_gamma_radius * np.array(
+        [
+            np.cos(hodograph_gamma_label_angle),
+            np.sin(hodograph_gamma_label_angle),
+        ]
+    )
+    set_angle_arc(
+        artists.hodograph_gamma,
+        np.zeros(2),
+        hodograph_gamma_points,
+        hodograph_gamma_label,
+    )
+
+    def formatted_complex(value: complex) -> str:
+        sign = "+" if np.imag(value) >= 0.0 else "-"
+        return (
+            rf"${np.real(value):.3f}{sign}{abs(np.imag(value)):.3f}"
+            r"\,\mathrm{i}$"
+        )
+
+    artists.spinor_top.set_text(formatted_complex(spinors[index, 0]))
+    artists.spinor_bottom.set_text(formatted_complex(spinors[index, 1]))
 
     if stage == "landmark":
         artists.subtitle.set_text("Polarisation landmarks")
@@ -745,18 +1213,16 @@ def set_chapter_one_frame(
     elif stage == "phase":
         artists.subtitle.set_text("Common phase")
         artists.explanation.set_text(
-            r"Changing $\gamma$ moves the white point only; "
-            r"the Stokes vector and ellipse geometry remain fixed."
+            r"The phase runs uniformly; the unit Stokes vector and "
+            r"ellipse geometry remain fixed."
         )
     else:
         raise ValueError(f"Unknown chapter-one stage: {stage}")
+    displayed_gamma = phase_direction * phase_angle
     artists.parameter_text.set_text(
-        "varphi = "
-        f"{np.degrees(varphi[index]):6.1f} deg    "
-        "lambda = "
-        f"{np.degrees(longitude[index]):6.1f} deg    "
-        "gamma = "
-        f"{np.degrees(gamma[index]):6.1f} deg"
+        rf"$\varphi={np.degrees(varphi[index]):.1f}^\circ,\quad"
+        rf"\lambda={np.degrees(longitude[index]):.1f}^\circ,\quad"
+        rf"\gamma={np.degrees(displayed_gamma):.1f}^\circ$"
     )
 
 
@@ -1112,12 +1578,12 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 maps the normalised Stokes direction to the physical hodograph $$\phi(\theta)=\mathscr A_\uparrow\exp(-\mathrm i\theta)+\mathscr A_\downarrow\exp(\mathrm i\theta)$$. Latitude $$\varphi$$ controls handedness and ellipticity, longitude $$\lambda$$ rotates the ellipse through $$\lambda/2$$, and common phase $$\gamma$$ changes only the instantaneous position on a fixed hodograph. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector $$\widehat{\mathbf S}$$ and displays the corresponding numerical spinor between the two panels. It maps this state to $$\phi=u+\mathrm i v=\mathscr A_\uparrow\exp(-\mathrm i f t)+\mathscr A_\downarrow\exp(\mathrm i f t)$$. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and the phase coordinate $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. The phase advances uniformly at $$2\pi/7$$ radians per second of movie time and resets after each turn. Northern-hemisphere states run clockwise; southern-hemisphere states run counter-clockwise. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
     accessibility = """Accessibility description for movie 1
 
 The movie has a white background, dark serif labels and fixed axes. It has no audio. Blue solid curves and circular markers are always labelled as the positive generator direction. Red dashed curves and square markers are always labelled as the negative generator direction, so the two directions can be distinguished without colour.
 
-Chapter 1 uses a left-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red Stokes arrow and a white outlined endpoint. The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. A black hodograph and a white outlined instantaneous-position marker are shown. At the north pole the hodograph is a clockwise circle; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. During the ellipticity segment the ellipse changes shape and handedness. During the orientation segment the ellipse rotates while its shape is fixed. During the common-phase segment the sphere arrow and full ellipse stay fixed while only the white point travels around the ellipse.
+Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red unit Stokes arrow and a white outlined endpoint. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The centre shows the current two numerical entries of the spinor (A_up, conjugate(A_down)) and the equation phi=u+i v=A_up exp(-i f t)+A_down exp(i f t). The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. A black hodograph, a white outlined instantaneous-position marker and a blue arrow from the origin to that marker are shown. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. The phase marker advances at a constant rate throughout Chapter 1; the blue sectors reset after each seven-second turn. At the north pole the hodograph is a clockwise circle; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. During the ellipticity segment the ellipse changes shape and handedness. During the orientation segment the ellipse rotates while its shape is fixed. During the common-phase segment the sphere arrow and full ellipse stay fixed while the phase motion continues at the same rate.
 
 Chapter 2 uses four columns and two rows. Columns are labelled sigma_0, sigma_1, sigma_2 and sigma_3. The top row contains pale grey unit spheres and unnormalised Stokes vectors; the bottom row contains equal-aspect hodographs. Every column begins at the same white outlined state. In the sigma_0 column the Stokes vector changes radially and the hodograph changes scale. In the sigma_1 column the Stokes vector moves around a constant-latitude circle and the hodograph rotates without changing ellipticity. In the sigma_2 and sigma_3 columns the vector follows non-compact stretching paths and the two rotary components mix, visibly changing the hodograph shape and orientation. Axis limits and camera views remain fixed throughout each chapter."""
     manuscript_reference = (
@@ -1162,6 +1628,7 @@ Matrix and Clifford checks
 
 Spinor, Stokes and hodograph checks
 - Stokes norm identity error: {validation["stokes_norm_identity_error"]:.3e}
+- Chapter 1 unit-Stokes error: {validation["chapter1_unit_stokes_error"]:.3e}
 - Common-phase Stokes invariance error: {validation["common_phase_stokes_invariance_error"]:.3e}
 - Equator minor semiaxis: {validation["equator_minor_semiaxis"]:.3e}
 - Longitude/2 orientation error: {validation["longitude_half_orientation_error"]:.3e}
@@ -1173,6 +1640,7 @@ Spinor, Stokes and hodograph checks
 - Saved hodograph/same-spinor error: {validation["saved_hodograph_same_spinor_error"]:.3e}
 - North-pole signed area: {validation["north_clockwise_signed_area"]:.6f} (negative means clockwise)
 - South-pole signed area: {validation["south_counterclockwise_signed_area"]:.6f} (positive means counter-clockwise)
+- Chapter 1 phase period/angular speed: {CHAPTER_ONE_PHASE_PERIOD_SECONDS:.1f} s / {2.0 * np.pi / CHAPTER_ONE_PHASE_PERIOD_SECONDS:.9f} rad s^-1
 
 Video checks
 - Codec/pixel format: {video["codec"]} / {video["pixel_format"]}
@@ -1186,6 +1654,7 @@ Video checks
 
 Reference comparison
 - Figure 1 was rendered before production. The movie uses the same left-right Stokes-sphere/hodograph logic, white background, serif mathematical typography, pale grey sphere, black hodograph and white outlined state marker.
+- Chapter 1 also reproduces the reference green lambda, orange varphi and blue gamma angle sectors, with half-angle labels on the hodograph.
 - Figure 2 was rendered before production. Chapter 2 uses the same four generator columns, Stokes panels above hodograph panels, blue positive direction, red negative direction and common white initial state. Dashed red versus solid blue line style and square versus circular markers add colour-independent identification.
 
 Representative encoded frames inspected
@@ -1206,6 +1675,11 @@ Checks and result
 - Mathematical labels and spinor convention: passed.
 - Clockwise/counter-clockwise handedness: passed.
 - Sphere and hodograph synchronisation: passed.
+- Unit-vector normalisation on the Chapter 1 Bloch sphere: passed.
+- Numerical spinor entries and the displayed spinor convention: passed.
+- Uniform seven-second phase turns and blue-arc reset: passed.
+- Northern-hemisphere clockwise and southern-hemisphere counter-clockwise motion: passed.
+- Blue hodograph arrow terminates at the white phase marker: passed.
 - Fixed camera, projection and axis limits within each chapter: passed.
 - Text legibility at 1920 x 1080: passed.
 - Label, arrow and trajectory overlap: passed.
@@ -1238,7 +1712,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the unit Bloch/Stokes vector, the corresponding numerical spinor, all three angle arcs, and a uniformly advancing seven-second phase cycle. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -1360,6 +1834,16 @@ def render_movie(
     for _ in range(frame_counts["chapter1_title"]):
         send(chapter1_title)
 
+    chapter_one_frame = 0
+
+    def current_phase_angle() -> float:
+        elapsed = chapter_one_frame / fps
+        return float(
+            2.0
+            * np.pi
+            * ((elapsed / CHAPTER_ONE_PHASE_PERIOD_SECONDS) % 1.0)
+        )
+
     count = frame_counts["landmark"]
     for frame_index in range(count):
         progress = frame_index / max(count - 1, 1)
@@ -1370,9 +1854,11 @@ def render_movie(
             arrays,
             "landmark",
             data_index,
+            phase_angle=current_phase_angle(),
             landmark_label=label,
         )
         send(canvas_rgb(chapter_one.figure))
+        chapter_one_frame += 1
 
     for stage in ("ellipticity", "orientation", "phase"):
         count = frame_counts[stage]
@@ -1380,8 +1866,15 @@ def render_movie(
             progress = frame_index / max(count - 1, 1)
             smooth = progress * progress * (3.0 - 2.0 * progress)
             data_index = int(round(smooth * (sample_count - 1)))
-            set_chapter_one_frame(chapter_one, arrays, stage, data_index)
+            set_chapter_one_frame(
+                chapter_one,
+                arrays,
+                stage,
+                data_index,
+                phase_angle=current_phase_angle(),
+            )
             send(canvas_rgb(chapter_one.figure))
+            chapter_one_frame += 1
 
     for _ in range(frame_counts["chapter2_title"]):
         send(chapter2_title)
@@ -1489,6 +1982,17 @@ def main() -> None:
         "expected_frame_count": total_frames,
         "ffmpeg_build": Path(ffmpeg).name,
     }
+    metadata.setdefault("display", {}).update(
+        {
+            "chapter_1_phase_period_seconds": CHAPTER_ONE_PHASE_PERIOD_SECONDS,
+            "chapter_1_phase_angular_speed_radians_per_second": (
+                2.0 * np.pi / CHAPTER_ONE_PHASE_PERIOD_SECONDS
+            ),
+            "chapter_1_phase_resets_after_radians": 2.0 * np.pi,
+            "chapter_1_northern_hemisphere_motion": "clockwise",
+            "chapter_1_southern_hemisphere_motion": "counter-clockwise",
+        }
+    )
     metadata_path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
