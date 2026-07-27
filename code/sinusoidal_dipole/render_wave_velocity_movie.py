@@ -627,6 +627,7 @@ def build_sequence(
     *,
     frame_stride: int,
     hold_frames: int,
+    opening_frames: int,
     title_frames: int,
     chapter_end_frames: int,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
@@ -634,6 +635,7 @@ def build_sequence(
     if (
         frame_stride <= 0
         or hold_frames <= 0
+        or opening_frames <= 0
         or title_frames <= 0
         or chapter_end_frames <= 0
     ):
@@ -645,12 +647,12 @@ def build_sequence(
     segments: list[dict[str, Any]] = []
     sources: list[Path] = []
     opening_key = "opening_title"
-    sources.extend([unique_frames[opening_key]] * title_frames)
+    sources.extend([unique_frames[opening_key]] * opening_frames)
     segments.append(
         {
             "kind": "opening_title",
             "start_frame": 0,
-            "frame_count": title_frames,
+            "frame_count": opening_frames,
             "source_key": opening_key,
         }
     )
@@ -1048,6 +1050,7 @@ def write_auxiliary_files(
     clipping = clipping_text(metadata)
     sample_interval = metadata["sampling"]["sample_interval_ip"]
     hold_frames = manifest["hold_frames"]
+    opening_seconds = manifest["opening_seconds"]
     title_seconds = manifest["title_seconds"]
     chapter_end_frames = manifest["chapter_end_frames"]
     chapter_end_seconds = manifest["chapter_end_seconds"]
@@ -1056,8 +1059,9 @@ def write_auxiliary_files(
         "Movie 2. Evolution of the horizontal wave-velocity field in the "
         "sinusoidal-dipole background flow for YBJ, TSB, YBJ+, PSE and the "
         "hydrostatic Boussinesq equations (HBEs). The opening follows movie 1's "
-        "two-page structure: an overall title page followed by the first chapter "
-        f"page, each held for {title_seconds:g} s. The three sequential chapters "
+        f"two-page structure: an overall title page held for {opening_seconds:g} "
+        f"s followed by the first chapter page held for {title_seconds:g} s. "
+        "The three sequential chapters "
         "show vertical modes $$n=4$$, $$n=16$$ and $$n=32$$ from 0 to 50 "
         "inertial periods (IP). For the common depth "
         "$$H=4000\\,\\mathrm{m}$$, their respective vertical wavelengths are "
@@ -1091,8 +1095,9 @@ def write_auxiliary_files(
     accessibility = (
         "Accessibility description for movie 2\n\n"
         "The movie begins with two successive title pages matching movie 1: "
-        "an overall movie page and then the Chapter 1 page, each displayed for "
-        f"{title_seconds:g} seconds. The movie has three chapters, in the order "
+        f"an overall movie page displayed for {opening_seconds:g} seconds and "
+        f"then the Chapter 1 page displayed for {title_seconds:g} seconds. The "
+        "movie has three chapters, in the order "
         "n=4, n=16 and n=32. Each "
         "chapter title also gives the corresponding vertical wavelength: "
         "1000 m, 250 m and 125 m, respectively, for the common 4000-m depth. "
@@ -1167,8 +1172,9 @@ def write_auxiliary_files(
         "- File smaller than 50 MB: passed\n"
         "- Browser-oriented H.264/yuv420p encoding and decode test: passed\n"
         "- No audio stream or background music: passed\n\n"
-        f"The overall opening page and Chapter 1 page are each held for "
-        f"{title_seconds:g} seconds, matching movie 1's two-page opening.\n"
+        f"The overall opening page is held for {opening_seconds:g} seconds; "
+        f"each Chapter page is held for {title_seconds:g} seconds to ensure "
+        "its mode information can be read comfortably.\n"
         f"Each chapter ends with an additional {chapter_end_seconds:g}-second "
         "still hold of its true 50-IP terminal frame.\n\n"
         f"JFM preparing-materials guidance: {JFM_PREPARING_URL}\n"
@@ -1212,8 +1218,9 @@ def write_auxiliary_files(
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
         "The three chapters show n=4, n=16 and n=32, with the manuscript "
         "vertical wavelengths 1000 m, 250 m and 125 m, "
-        f"respectively. The movie opens with two successive {title_seconds:g}-"
-        "second pages: the overall movie title and the Chapter 1 title. The "
+        f"respectively. The movie opens with a {opening_seconds:g}-second "
+        f"overall title page followed by a {title_seconds:g}-second Chapter 1 "
+        "page; the later Chapter pages use the same longer duration. The "
         "curve panel shows instantaneous NRE, distinct from "
         "the time-averaged NRE in manuscript figure 8. Its y-axis is fixed at "
         "0--40% for n=4 and 0--10% for n=16 and n=32. The 51 physical states "
@@ -1254,7 +1261,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--hold-frames", type=int, default=6)
-    parser.add_argument("--title-seconds", type=float, default=2.0)
+    parser.add_argument("--opening-seconds", type=float, default=2.0)
+    parser.add_argument("--title-seconds", type=float, default=4.0)
     parser.add_argument("--chapter-end-seconds", type=float, default=1.5)
     parser.add_argument("--crf", type=int, default=19)
     parser.add_argument("--dpi", type=int, default=100)
@@ -1271,13 +1279,14 @@ def main() -> None:
     args = parse_args()
     if not 20 <= args.fps <= 24:
         raise ValueError("Final movie frame rate must be between 20 and 24 fps.")
-    if args.title_seconds <= 0.0:
-        raise ValueError("--title-seconds must be positive.")
+    if args.opening_seconds <= 0.0 or args.title_seconds <= 0.0:
+        raise ValueError("--opening-seconds and --title-seconds must be positive.")
     if not 0 <= args.crf <= 30:
         raise ValueError("--crf must lie between 0 and 30.")
+    opening_frames = int(round(args.opening_seconds * args.fps))
     title_frames = int(round(args.title_seconds * args.fps))
-    if title_frames <= 0:
-        raise ValueError("The title duration produced no video frames.")
+    if opening_frames <= 0 or title_frames <= 0:
+        raise ValueError("A title-page duration produced no video frames.")
     chapter_end_frames = int(round(args.chapter_end_seconds * args.fps))
     if chapter_end_frames <= 0:
         raise ValueError("The chapter-end duration produced no video frames.")
@@ -1366,6 +1375,7 @@ def main() -> None:
             modes,
             frame_stride=args.frame_stride,
             hold_frames=args.hold_frames,
+            opening_frames=opening_frames,
             title_frames=title_frames,
             chapter_end_frames=chapter_end_frames,
         )
@@ -1451,6 +1461,8 @@ def main() -> None:
             "duration_seconds": duration,
             "frame_stride": args.frame_stride,
             "hold_frames": args.hold_frames,
+            "opening_frames": opening_frames,
+            "opening_seconds": args.opening_seconds,
             "title_frames": title_frames,
             "title_seconds": args.title_seconds,
             "opening_page_count": 2,

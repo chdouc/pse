@@ -440,8 +440,10 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         )
     if (
         "two-page structure" not in caption
-        or "each held for 2 s" not in caption
+        or "overall title page held for 2 s" not in caption
+        or "first chapter page held for 4 s" not in caption
         or "two successive title pages" not in accessibility
+        or "Chapter 1 page displayed for 4 seconds" not in accessibility
     ):
         raise ValueError(
             "Caption or accessibility text does not document the two-page opening."
@@ -594,10 +596,14 @@ def check_render_outputs(
         raise ValueError(
             "Movie style metadata no longer matches manuscript figures 8--10."
         )
+    opening_frames = int(manifest.get("opening_frames", 0))
+    opening_seconds = float(manifest.get("opening_seconds", 0.0))
     title_frames = int(manifest.get("title_frames", 0))
     title_seconds = float(manifest.get("title_seconds", 0.0))
-    if title_seconds != 2.0 or title_frames != 48:
-        raise ValueError("Movie 1-aligned title pages must each last 2 seconds.")
+    if opening_seconds != 2.0 or opening_frames != 48:
+        raise ValueError("The overall opening page must last 2 seconds.")
+    if title_seconds != 4.0 or title_frames != 96:
+        raise ValueError("Each Chapter page must last 4 seconds for readability.")
     if int(manifest.get("opening_page_count", 0)) != 2:
         raise ValueError("Movie 2 must open with an overall and a Chapter 1 page.")
     chapter_end_frames = int(manifest.get("chapter_end_frames", 0))
@@ -633,7 +639,7 @@ def check_render_outputs(
     ]
     if len(opening_titles) != 1 or opening_titles[0] != segments[0]:
         raise ValueError("The overall opening page is missing or misplaced.")
-    if opening_titles[0]["frame_count"] != title_frames:
+    if opening_titles[0]["frame_count"] != opening_frames:
         raise ValueError("The overall opening-page duration changed.")
     if [int(item["vertical_mode"]) for item in chapter_titles] != [4, 16, 32]:
         raise ValueError("The three mode chapter pages are missing or reordered.")

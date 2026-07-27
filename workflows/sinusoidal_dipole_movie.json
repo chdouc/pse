@@ -13,7 +13,8 @@
     "physical_field_sample_interval_ip": 1.0,
     "physical_field_interpolation": false,
     "opening_page_count": 2,
-    "title_page_seconds": 2.0,
+    "opening_page_seconds": 2.0,
+    "chapter_title_page_seconds": 4.0,
     "chapter_end_pause_seconds": 1.5,
     "absolute_colormap": "twilight_shifted",
     "difference_colormap": "RdBu_r",
@@ -80,6 +81,7 @@
         "resolution": "${resolution?}",
         "frame_stride": "${frame_stride?}",
         "hold_frames": "${hold_frames?}",
+        "opening_seconds": "${opening_seconds?}",
         "title_seconds": "${title_seconds?}",
         "chapter_end_seconds": "${chapter_end_seconds?}",
         "crf": "${crf?}"

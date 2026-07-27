@@ -217,8 +217,8 @@ python run_workflow.py sinusoidal_dipole_movie \
 ```
 
 Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`,
-`--title-seconds`, `--chapter-end-seconds`, and `--crf` to override
-movie-rendering defaults.
+`--opening-seconds`, `--title-seconds`, `--chapter-end-seconds`, and `--crf`
+to override movie-rendering defaults.
 Movie 2 holds each terminal case frame for an additional 1.5 seconds. Its
 typography, model colours and NRE legend order are aligned with
 manuscript figures 8--10; its chapter cards also give the corresponding
@@ -227,8 +227,9 @@ the explicit model-minus-HBEs normalised squared-velocity expression, and the
 curve panel is labelled as instantaneous NRE to distinguish it from the
 time-averaged NRE in manuscript figure 8. Title-card hierarchy, font scale and
 vertical placement are aligned with supplementary movie 1. Like movie 1, the
-opening uses two successive 2-second pages: an overall movie page followed by
-the first chapter page. The
+opening uses an overall movie page followed by the first chapter page. The
+overall page lasts 2 seconds, while every Chapter page lasts 4 seconds so its
+mode, wavelength and time-range information can be read comfortably. The
 submission workflow restricts the frame rate to 20--24 fps and always encodes
 H.264/yuv420p with a constant frame rate, fast start, and no audio stream.
 
