@@ -60,6 +60,12 @@ NRE_LEGEND_VISUAL_ROWS = (
     ("YBJ", "TSB"),
     ("YBJ+", "PSE"),
 )
+TITLE_CARD_REFERENCE_RESOLUTION = (1920, 1080)
+TITLE_CARD_REFERENCE_DPI = 120
+TITLE_CARD_TITLE_POSITION = (0.5, 0.62)
+TITLE_CARD_SUBTITLE_POSITION = (0.5, 0.43)
+TITLE_CARD_REFERENCE_TITLE_FONTSIZE = 31.0
+TITLE_CARD_REFERENCE_SUBTITLE_FONTSIZE = 20.0
 JFM_PREPARING_URL = (
     "https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/"
     "information/author-instructions/preparing-your-materials"
@@ -519,18 +525,25 @@ class ChapterRenderer:
         self.context.__exit__(None, None, None)
 
 
-def render_title_frame(
+def render_text_title_frame(
     path: Path,
     *,
-    mode: int,
-    chapter: int,
-    chapter_count: int,
+    title: str,
+    subtitle: str,
     resolution: tuple[int, int],
     dpi: int,
 ) -> None:
-    """Render a static chapter title without interpolating physical fields."""
+    """Render one static card with Movie 1's hierarchy and placement."""
     width, height = resolution
-    wavelength_metres = VERTICAL_WAVELENGTH_METRES[mode]
+    reference_height = TITLE_CARD_REFERENCE_RESOLUTION[1]
+    font_scale = (
+        TITLE_CARD_REFERENCE_DPI
+        / dpi
+        * height
+        / reference_height
+    )
+    title_fontsize = TITLE_CARD_REFERENCE_TITLE_FONTSIZE * font_scale
+    subtitle_fontsize = TITLE_CARD_REFERENCE_SUBTITLE_FONTSIZE * font_scale
     with plt.rc_context(movie_publication_style()):
         figure = plt.figure(
             figsize=(width / dpi, height / dpi),
@@ -538,39 +551,20 @@ def render_title_frame(
             facecolor="white",
         )
         figure.text(
-            0.5,
-            0.70,
-            "Supplementary movie 2",
+            *TITLE_CARD_TITLE_POSITION,
+            title,
             ha="center",
             va="center",
-            fontsize=30.0,
+            fontsize=title_fontsize,
         )
         figure.text(
-            0.5,
-            0.59,
-            "Sinusoidal-dipole background flow",
+            *TITLE_CARD_SUBTITLE_POSITION,
+            subtitle,
             ha="center",
             va="center",
-            fontsize=22.0,
-        )
-        figure.text(
-            0.5,
-            0.43,
-            (
-                rf"Vertical mode $n={mode}$; vertical wavelength "
-                rf"$h={wavelength_metres}\,\mathrm{{m}}$"
-            ),
-            ha="center",
-            va="center",
-            fontsize=30.0,
-        )
-        figure.text(
-            0.5,
-            0.32,
-            f"Chapter {chapter} of {chapter_count}; 0-50 inertial periods",
-            ha="center",
-            va="center",
-            fontsize=20.0,
+            fontsize=subtitle_fontsize,
+            color="0.28",
+            linespacing=1.65,
         )
         figure.savefig(
             path,
@@ -580,6 +574,50 @@ def render_title_frame(
             pil_kwargs={"compress_level": 3},
         )
         plt.close(figure)
+
+
+def render_opening_frame(
+    path: Path,
+    *,
+    resolution: tuple[int, int],
+    dpi: int,
+) -> None:
+    """Render the overall opening page before the first chapter page."""
+    render_text_title_frame(
+        path,
+        title="Supplementary movie 2",
+        subtitle=(
+            "Wave-field evolution in a sinusoidal-dipole background flow"
+        ),
+        resolution=resolution,
+        dpi=dpi,
+    )
+
+
+def render_title_frame(
+    path: Path,
+    *,
+    mode: int,
+    chapter: int,
+    chapter_count: int,
+    resolution: tuple[int, int],
+    dpi: int,
+) -> None:
+    """Render one mode page after the overall opening page."""
+    if not 1 <= chapter <= chapter_count:
+        raise ValueError("Chapter index is outside the declared chapter count.")
+    wavelength_metres = VERTICAL_WAVELENGTH_METRES[mode]
+    render_text_title_frame(
+        path,
+        title=f"Chapter {chapter}",
+        subtitle=(
+            rf"Vertical mode $n={mode}$ (vertical wavelength "
+            rf"$h={wavelength_metres}\,\mathrm{{m}}$); "
+            "0-50 inertial periods"
+        ),
+        resolution=resolution,
+        dpi=dpi,
+    )
 
 
 def build_sequence(
@@ -606,6 +644,16 @@ def build_sequence(
 
     segments: list[dict[str, Any]] = []
     sources: list[Path] = []
+    opening_key = "opening_title"
+    sources.extend([unique_frames[opening_key]] * title_frames)
+    segments.append(
+        {
+            "kind": "opening_title",
+            "start_frame": 0,
+            "frame_count": title_frames,
+            "source_key": opening_key,
+        }
+    )
     for mode in modes:
         title_key = f"n{int(mode)}_title"
         start = len(sources)
@@ -809,6 +857,15 @@ def representative_segments(
             and np.isclose(segment["time_ip"], time_ip)
         )
 
+    opening = next(
+        segment for segment in segments if segment["kind"] == "opening_title"
+    )
+    transition_4 = next(
+        segment
+        for segment in segments
+        if segment["kind"] == "chapter_title"
+        and segment["vertical_mode"] == 4
+    )
     transition_16 = next(
         segment
         for segment in segments
@@ -822,6 +879,8 @@ def representative_segments(
         and segment["vertical_mode"] == 32
     )
     return [
+        ("Opening title", opening),
+        ("Chapter 1 title", transition_4),
         ("n=4, t=0 IP", scientific(4, 0.0)),
         ("n=4, t=10 IP", scientific(4, 10.0)),
         ("n=4, t=25 IP", scientific(4, 25.0)),
@@ -989,13 +1048,16 @@ def write_auxiliary_files(
     clipping = clipping_text(metadata)
     sample_interval = metadata["sampling"]["sample_interval_ip"]
     hold_frames = manifest["hold_frames"]
+    title_seconds = manifest["title_seconds"]
     chapter_end_frames = manifest["chapter_end_frames"]
     chapter_end_seconds = manifest["chapter_end_seconds"]
 
     caption = (
         "Movie 2. Evolution of the horizontal wave-velocity field in the "
         "sinusoidal-dipole background flow for YBJ, TSB, YBJ+, PSE and the "
-        "hydrostatic Boussinesq equations (HBEs). The three sequential chapters "
+        "hydrostatic Boussinesq equations (HBEs). The opening follows movie 1's "
+        "two-page structure: an overall title page followed by the first chapter "
+        f"page, each held for {title_seconds:g} s. The three sequential chapters "
         "show vertical modes $$n=4$$, $$n=16$$ and $$n=32$$ from 0 to 50 "
         "inertial periods (IP). For the common depth "
         "$$H=4000\\,\\mathrm{m}$$, their respective vertical wavelengths are "
@@ -1028,7 +1090,10 @@ def write_auxiliary_files(
 
     accessibility = (
         "Accessibility description for movie 2\n\n"
-        "The movie has three chapters, in the order n=4, n=16 and n=32. Each "
+        "The movie begins with two successive title pages matching movie 1: "
+        "an overall movie page and then the Chapter 1 page, each displayed for "
+        f"{title_seconds:g} seconds. The movie has three chapters, in the order "
+        "n=4, n=16 and n=32. Each "
         "chapter title also gives the corresponding vertical wavelength: "
         "1000 m, 250 m and 125 m, respectively, for the common 4000-m depth. "
         "The NRE vertical axis spans 0 to 40% for n=4 and 0 to 10% for n=16 "
@@ -1102,6 +1167,8 @@ def write_auxiliary_files(
         "- File smaller than 50 MB: passed\n"
         "- Browser-oriented H.264/yuv420p encoding and decode test: passed\n"
         "- No audio stream or background music: passed\n\n"
+        f"The overall opening page and Chapter 1 page are each held for "
+        f"{title_seconds:g} seconds, matching movie 1's two-page opening.\n"
         f"Each chapter ends with an additional {chapter_end_seconds:g}-second "
         "still hold of its true 50-IP terminal frame.\n\n"
         f"JFM preparing-materials guidance: {JFM_PREPARING_URL}\n"
@@ -1145,7 +1212,9 @@ def write_auxiliary_files(
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
         "The three chapters show n=4, n=16 and n=32, with the manuscript "
         "vertical wavelengths 1000 m, 250 m and 125 m, "
-        "respectively. The curve panel shows instantaneous NRE, distinct from "
+        f"respectively. The movie opens with two successive {title_seconds:g}-"
+        "second pages: the overall movie title and the Chapter 1 title. The "
+        "curve panel shows instantaneous NRE, distinct from "
         "the time-averaged NRE in manuscript figure 8. Its y-axis is fixed at "
         "0--40% for n=4 and 0--10% for n=16 and n=32. The 51 physical states "
         "in each chapter are true saved integer-period outputs from 0 to 50 IP. "
@@ -1185,7 +1254,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--hold-frames", type=int, default=6)
-    parser.add_argument("--title-seconds", type=float, default=1.5)
+    parser.add_argument("--title-seconds", type=float, default=2.0)
     parser.add_argument("--chapter-end-seconds", type=float, default=1.5)
     parser.add_argument("--crf", type=int, default=19)
     parser.add_argument("--dpi", type=int, default=100)
@@ -1247,6 +1316,13 @@ def main() -> None:
         unique_directory.mkdir(parents=True)
         qc_directory.mkdir(parents=True)
         unique_frames: dict[str, Path] = {}
+        opening_path = unique_directory / "opening_title.png"
+        render_opening_frame(
+            opening_path,
+            resolution=args.resolution,
+            dpi=args.dpi,
+        )
+        unique_frames["opening_title"] = opening_path
 
         for chapter, (mode_index, mode) in enumerate(
             enumerate(modes),
@@ -1376,6 +1452,8 @@ def main() -> None:
             "frame_stride": args.frame_stride,
             "hold_frames": args.hold_frames,
             "title_frames": title_frames,
+            "title_seconds": args.title_seconds,
+            "opening_page_count": 2,
             "chapter_end_frames": chapter_end_frames,
             "chapter_end_seconds": args.chapter_end_seconds,
             "vertical_modes": modes.tolist(),
@@ -1433,6 +1511,34 @@ def main() -> None:
                 "nre_quantity": (
                     "instantaneous complex-velocity NRE relative to HBEs"
                 ),
+                "title_card_alignment": {
+                    "reference": "supplementary movie 1",
+                    "reference_resolution": list(
+                        TITLE_CARD_REFERENCE_RESOLUTION
+                    ),
+                    "reference_dpi": TITLE_CARD_REFERENCE_DPI,
+                    "title_position": list(TITLE_CARD_TITLE_POSITION),
+                    "subtitle_position": list(
+                        TITLE_CARD_SUBTITLE_POSITION
+                    ),
+                    "reference_title_fontsize": (
+                        TITLE_CARD_REFERENCE_TITLE_FONTSIZE
+                    ),
+                    "reference_subtitle_fontsize": (
+                        TITLE_CARD_REFERENCE_SUBTITLE_FONTSIZE
+                    ),
+                    "opening_page_count": 2,
+                    "opening_title": "Supplementary movie 2",
+                    "opening_subtitle": (
+                        "Wave-field evolution in a sinusoidal-dipole "
+                        "background flow"
+                    ),
+                    "chapter_title_pattern": "Chapter {chapter}",
+                    "chapter_subtitle_pattern": (
+                        "Vertical mode n={mode} (vertical wavelength "
+                        "h={wavelength} m); 0-50 inertial periods"
+                    ),
+                },
             },
             "physical_field_interpolation": False,
             "ffmpeg_attempts": [

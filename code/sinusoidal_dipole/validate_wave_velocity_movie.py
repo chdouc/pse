@@ -85,6 +85,25 @@ EXPECTED_STYLE_ALIGNMENT = {
     "upper_row_quantity": "|phi|^2/|phi_amp|^2",
     "difference_quantity": "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2",
     "nre_quantity": "instantaneous complex-velocity NRE relative to HBEs",
+    "title_card_alignment": {
+        "reference": "supplementary movie 1",
+        "reference_resolution": [1920, 1080],
+        "reference_dpi": 120,
+        "title_position": [0.5, 0.62],
+        "subtitle_position": [0.5, 0.43],
+        "reference_title_fontsize": 31.0,
+        "reference_subtitle_fontsize": 20.0,
+        "opening_page_count": 2,
+        "opening_title": "Supplementary movie 2",
+        "opening_subtitle": (
+            "Wave-field evolution in a sinusoidal-dipole background flow"
+        ),
+        "chapter_title_pattern": "Chapter {chapter}",
+        "chapter_subtitle_pattern": (
+            "Vertical mode n={mode} (vertical wavelength h={wavelength} m); "
+            "0-50 inertial periods"
+        ),
+    },
 }
 REQUIRED_OUTPUTS = (
     "movie2.mp4",
@@ -419,6 +438,14 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
             "Caption does not distinguish instantaneous NRE or define the "
             "model-minus-HBEs field explicitly."
         )
+    if (
+        "two-page structure" not in caption
+        or "each held for 2 s" not in caption
+        or "two successive title pages" not in accessibility
+    ):
+        raise ValueError(
+            "Caption or accessibility text does not document the two-page opening."
+        )
     if "additional 1.5 seconds" not in accessibility:
         raise ValueError(
             "Accessibility description does not document the chapter-end holds."
@@ -454,6 +481,7 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         "local_absolute_paths_absent": True,
         "ambiguous_uppercase_delta_absent": True,
         "instantaneous_nre_distinguished": True,
+        "two_page_opening_documented": True,
     }
 
 
@@ -566,6 +594,12 @@ def check_render_outputs(
         raise ValueError(
             "Movie style metadata no longer matches manuscript figures 8--10."
         )
+    title_frames = int(manifest.get("title_frames", 0))
+    title_seconds = float(manifest.get("title_seconds", 0.0))
+    if title_seconds != 2.0 or title_frames != 48:
+        raise ValueError("Movie 1-aligned title pages must each last 2 seconds.")
+    if int(manifest.get("opening_page_count", 0)) != 2:
+        raise ValueError("Movie 2 must open with an overall and a Chapter 1 page.")
     chapter_end_frames = int(manifest.get("chapter_end_frames", 0))
     chapter_end_seconds = float(manifest.get("chapter_end_seconds", 0.0))
     expected_chapter_end_frames = int(
@@ -591,6 +625,22 @@ def check_render_outputs(
     previous_scientific_time: dict[int, float] = {}
     chapter_end_holds: dict[int, int] = {}
     chapter_end_segments: dict[int, dict[str, Any]] = {}
+    opening_titles = [
+        segment for segment in segments if segment["kind"] == "opening_title"
+    ]
+    chapter_titles = [
+        segment for segment in segments if segment["kind"] == "chapter_title"
+    ]
+    if len(opening_titles) != 1 or opening_titles[0] != segments[0]:
+        raise ValueError("The overall opening page is missing or misplaced.")
+    if opening_titles[0]["frame_count"] != title_frames:
+        raise ValueError("The overall opening-page duration changed.")
+    if [int(item["vertical_mode"]) for item in chapter_titles] != [4, 16, 32]:
+        raise ValueError("The three mode chapter pages are missing or reordered.")
+    if any(item["frame_count"] != title_frames for item in chapter_titles):
+        raise ValueError("A mode chapter-page duration changed.")
+    if len(segments) < 2 or segments[1] != chapter_titles[0]:
+        raise ValueError("Chapter 1 must follow the overall opening page.")
     for segment_index, segment in enumerate(segments):
         if segment["start_frame"] != expected_start:
             raise ValueError("Render segments contain a frame gap or overlap.")
@@ -652,6 +702,8 @@ def check_render_outputs(
 
     qc = manifest["representative_qc"]
     required_labels = {
+        "Opening title",
+        "Chapter 1 title",
         "n=4, t=0 IP",
         "n=4, t=10 IP",
         "n=4, t=25 IP",

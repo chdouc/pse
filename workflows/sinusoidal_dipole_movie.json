@@ -12,6 +12,8 @@
     "times_in_inertial_periods": [0.0, 50.0],
     "physical_field_sample_interval_ip": 1.0,
     "physical_field_interpolation": false,
+    "opening_page_count": 2,
+    "title_page_seconds": 2.0,
     "chapter_end_pause_seconds": 1.5,
     "absolute_colormap": "twilight_shifted",
     "difference_colormap": "RdBu_r",
@@ -32,7 +34,21 @@
       },
       "upper_row_quantity": "|phi|^2/|phi_amp|^2",
       "difference_quantity": "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2",
-      "nre_quantity": "instantaneous complex-velocity NRE relative to HBEs"
+      "nre_quantity": "instantaneous complex-velocity NRE relative to HBEs",
+      "title_card_alignment": {
+        "reference": "supplementary movie 1",
+        "reference_resolution": [1920, 1080],
+        "reference_dpi": 120,
+        "title_position": [0.5, 0.62],
+        "subtitle_position": [0.5, 0.43],
+        "reference_title_fontsize": 31,
+        "reference_subtitle_fontsize": 20,
+        "opening_page_count": 2,
+        "opening_title": "Supplementary movie 2",
+        "opening_subtitle": "Wave-field evolution in a sinusoidal-dipole background flow",
+        "chapter_title_pattern": "Chapter {chapter}",
+        "chapter_subtitle_pattern": "Vertical mode n={mode} (vertical wavelength h={wavelength} m); 0-50 inertial periods"
+      }
     }
   },
   "steps": [
@@ -64,6 +80,7 @@
         "resolution": "${resolution?}",
         "frame_stride": "${frame_stride?}",
         "hold_frames": "${hold_frames?}",
+        "title_seconds": "${title_seconds?}",
         "chapter_end_seconds": "${chapter_end_seconds?}",
         "crf": "${crf?}"
       }
