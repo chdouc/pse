@@ -23,14 +23,34 @@ from render_wave_velocity_movie import (
 
 MODEL_NAMES = ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]
 NRE_MODEL_NAMES = MODEL_NAMES[:4]
-EXPECTED_N4_T50_MAXIMA = np.asarray(
+EXPECTED_VERTICAL_MODES = np.asarray([4, 16, 32])
+EXPECTED_T50_MAXIMA = np.asarray(
     [
-        31.786428361858587,
-        37.32062604847504,
-        37.239008041643494,
-        37.54282297563831,
-        27.56445542781792,
+        [
+            31.786428361858587,
+            37.32062604847504,
+            37.239008041643494,
+            37.54282297563831,
+            27.56445542781792,
+        ],
+        [
+            1.6125659389777067,
+            1.6123885329555694,
+            1.6123861068367464,
+            1.6135188620971153,
+            1.6784137820082063,
+        ],
+        [
+            1.1200476980737526,
+            1.1200508886292768,
+            1.1200508180212077,
+            1.189362150464363,
+            1.1880821730307622,
+        ],
     ]
+)
+EXPECTED_ABSOLUTE_LIMITS = np.asarray(
+    [[0.01, 10.0], [0.50, 1.50], [0.88, 1.12]]
 )
 REQUIRED_OUTPUTS = (
     "movie2.mp4",
@@ -130,23 +150,23 @@ def check_archive(path: Path) -> dict[str, Any]:
 
         if not np.array_equal(times, np.arange(51.0)):
             raise ValueError("Movie fields must contain every integer time from 0--50 IP.")
-        if not np.array_equal(modes, np.asarray([4, 32])):
+        if not np.array_equal(modes, EXPECTED_VERTICAL_MODES):
             raise ValueError("Movie vertical-mode order changed.")
         if model_names != MODEL_NAMES or nre_names != NRE_MODEL_NAMES:
             raise ValueError("Movie model order changed.")
-        if fields.shape != (2, 51, 5, 64, 64):
+        if fields.shape != (3, 51, 5, 64, 64):
             raise ValueError(f"Unexpected movie field shape: {fields.shape}.")
-        if source_indices.shape != (2, 51):
+        if source_indices.shape != (3, 51):
             raise ValueError("Unexpected source-time index shape.")
         expected_indices = np.arange(0, 3201, 64)
-        if not np.array_equal(source_indices[0], expected_indices) or not np.array_equal(
-            source_indices[1],
-            expected_indices,
+        if not all(
+            np.array_equal(indices, expected_indices)
+            for indices in source_indices
         ):
             raise ValueError("Source-time selection no longer uses exact 1-IP states.")
         if not np.all(np.isfinite(fields)) or np.any(fields < 0.0):
             raise ValueError("Movie fields contain invalid values.")
-        if nre.shape != (2, 4, 3201) or nre_times.shape != (2, 3201):
+        if nre.shape != (3, 4, 3201) or nre_times.shape != (3, 3201):
             raise ValueError("NRE curve dimensions changed.")
         if not np.all(np.diff(nre_times, axis=1) > 0.0):
             raise ValueError("NRE time coordinates are not strictly increasing.")
@@ -162,9 +182,9 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("Initial modal-amplitude normalization changed.")
         if not np.array_equal(
             absolute_limits,
-            np.asarray([[0.01, 10.0], [0.88, 1.12]]),
+            EXPECTED_ABSOLUTE_LIMITS,
         ):
-            raise ValueError("Published fixed absolute color limits changed.")
+            raise ValueError("Fixed absolute color limits changed.")
         if not np.allclose(
             difference_limits[:, 0],
             -difference_limits[:, 1],
@@ -179,15 +199,15 @@ def check_archive(path: Path) -> dict[str, Any]:
         if np.max(nre_differences) > 1.0e-12:
             raise ValueError("Recomputed NRE values disagree with stored error data.")
         time_50 = int(np.flatnonzero(np.isclose(times, 50.0))[0])
-        maxima = fields[0, time_50].max(axis=(-2, -1))
+        maxima = fields[:, time_50].max(axis=(-2, -1))
         if not np.allclose(
             maxima,
-            EXPECTED_N4_T50_MAXIMA,
+            EXPECTED_T50_MAXIMA,
             rtol=0.0,
             atol=1.0e-10,
         ):
             raise ValueError(
-                f"n=4, t=50 IP maxima changed: {maxima.tolist()}."
+                f"Mode-wise t=50 IP maxima changed: {maxima.tolist()}."
             )
         for target in (10.0, 50.0):
             if not np.any(np.isclose(times, target, rtol=0.0, atol=1.0e-12)):
@@ -213,7 +233,10 @@ def check_archive(path: Path) -> dict[str, Any]:
         "model_order": model_names,
         "max_raw_processed_field_difference": float(np.max(field_differences)),
         "max_recomputed_stored_nre_difference": float(np.max(nre_differences)),
-        "n4_t50_maxima": maxima.tolist(),
+        "t50_maxima_by_mode": {
+            str(int(mode)): values.tolist()
+            for mode, values in zip(modes, maxima, strict=True)
+        },
         "absolute_color_limits": absolute_limits.tolist(),
         "difference_color_limits": difference_limits.tolist(),
         "clipping": metadata["color_limits"]["clipping"],
@@ -245,7 +268,16 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         raise ValueError("Caption is not explicitly titled Movie 2.")
     if caption.count("$$") < 4 or caption.count("$$") % 2:
         raise ValueError("Caption TeX maths is not consistently bounded by $$.")
-    for term in ("YBJ", "TSB", "YBJ+", "PSE", "HBEs", "n=4", "n=32"):
+    for term in (
+        "YBJ",
+        "TSB",
+        "YBJ+",
+        "PSE",
+        "HBEs",
+        "n=4",
+        "n=16",
+        "n=32",
+    ):
         if term not in caption:
             raise ValueError(f"Caption is missing required term {term!r}.")
     if "0 to 50" not in caption or "does not interpolate" not in caption:
@@ -401,8 +433,10 @@ def check_render_outputs(
             previous_scientific_time[mode] = time_ip
     if expected_start != media["frame_count"]:
         raise ValueError("Render segments do not cover every video frame.")
-    if previous_scientific_time != {4: 50.0, 32: 50.0}:
-        raise ValueError("Both movie chapters must end at 50 IP.")
+    if previous_scientific_time != {4: 50.0, 16: 50.0, 32: 50.0}:
+        raise ValueError("All three movie chapters must end at 50 IP.")
+    if manifest.get("vertical_modes") != [4, 16, 32]:
+        raise ValueError("Render manifest vertical-mode order changed.")
 
     qc = manifest["representative_qc"]
     required_labels = {
@@ -410,7 +444,10 @@ def check_render_outputs(
         "n=4, t=10 IP",
         "n=4, t=25 IP",
         "n=4, t=50 IP",
-        "Chapter transition",
+        "Transition to n=16",
+        "n=16, t=25 IP",
+        "n=16, t=50 IP",
+        "Transition to n=32",
         "n=32, t=50 IP",
     }
     if {item["label"] for item in qc} != required_labels:

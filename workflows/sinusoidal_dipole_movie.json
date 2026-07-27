@@ -7,7 +7,7 @@
   "models": ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"],
   "controlled_comparison": {
     "background_velocity_m_s": 0.25,
-    "vertical_modes": [4, 32],
+    "vertical_modes": [4, 16, 32],
     "times_in_inertial_periods": [0.0, 50.0],
     "physical_field_sample_interval_ip": 1.0,
     "physical_field_interpolation": false,

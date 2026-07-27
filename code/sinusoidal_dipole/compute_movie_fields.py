@@ -28,7 +28,7 @@ DEFAULT_OUTPUT = (
 
 MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
 NRE_MODEL_NAMES = MODEL_NAMES[:4]
-VERTICAL_MODES = ((4, 1000.0), (32, 125.0))
+VERTICAL_MODES = ((4, 1000.0), (16, 250.0), (32, 125.0))
 BACKGROUND_SPEED = 0.25
 DOMAIN_DEPTH_M = 4000.0
 RAW_FILENAME = "four_model_raw_timeseries.mat"
@@ -46,11 +46,13 @@ NRE_DATASETS = (
     "err_complex_phi_spin_step",
 )
 
-# These are the published Figure 10 ranges for the two displayed modes.
-# Clipping is counted over every model and every movie time and recorded in
-# the archive so it can be disclosed in the caption.
-PUBLISHED_ABSOLUTE_LIMITS = {
+# The n=4 and n=32 ranges reproduce the published Figure 10 scales.  The
+# intermediate n=16 range is centred on the unperturbed value one and covers
+# all but the most intense upper tail. Clipping is counted over every model
+# and time.
+FIXED_ABSOLUTE_LIMITS = {
     4: (0.01, 10.0),
+    16: (0.50, 1.50),
     32: (0.88, 1.12),
 }
 
@@ -480,7 +482,7 @@ def compute_archive(
     differences = field_array[:, :, :4] - field_array[:, :, 4:5]
 
     absolute_limits = np.asarray(
-        [PUBLISHED_ABSOLUTE_LIMITS[int(mode)] for mode, _ in VERTICAL_MODES],
+        [FIXED_ABSOLUTE_LIMITS[int(mode)] for mode, _ in VERTICAL_MODES],
         dtype=float,
     )
     difference_limits = []
@@ -556,7 +558,9 @@ def compute_archive(
         },
         "color_limits": {
             "absolute_strategy": (
-                "Fixed published Figure 10 limits for each vertical mode."
+                "Fixed mode-specific limits: n=4 and n=32 reproduce Figure 10; "
+                "n=16 uses [0.50, 1.50], centred on the unperturbed value one "
+                "and covering all but the most intense upper tail."
             ),
             "difference_strategy": (
                 f"Symmetric full-movie {difference_quantile:g} quantile of "

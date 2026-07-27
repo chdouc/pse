@@ -285,8 +285,8 @@ while comparing YBJ, TSB, YBJ+, and PSE. The wave-field comparison uses the
 same saved cases and ordering for YBJ, TSB, YBJ+, PSE, and the hydrostatic
 Boussinesq equations.
 
-Supplementary movie 2 uses modes `n=4` and `n=32`. Its intermediate NPZ
-records the true selected times, source indices and files, model order,
+Supplementary movie 2 uses modes `n=4`, `n=16`, and `n=32`. Its intermediate
+NPZ records the true selected times, source indices and files, model order,
 normalisation, fixed colour limits, NRE curves, PSE reconstruction metadata,
 and raw-versus-processed reference checks. Physical fields are never
 interpolated; playback speed is controlled by holding or striding true saved

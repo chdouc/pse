@@ -36,6 +36,7 @@ DEFAULT_INPUT = (
     / "sinusoidal_dipole_movie_fields.npz"
 )
 MAX_FILE_BYTES = 50_000_000
+EXPECTED_VERTICAL_MODES = (4, 16, 32)
 MODEL_STYLES = (
     ("YBJ", "#002BFF", "o", "-"),
     ("TSB", "#7A3E9D", "^", "--"),
@@ -123,8 +124,10 @@ def load_movie_data(path: Path) -> dict[str, Any]:
     modes = result["vertical_modes"]
     model_names = list(result["model_names"])
     fields = result["normalized_squared_velocity"]
-    if list(modes) != [4, 32]:
-        raise ValueError("Movie archive must contain vertical modes n=4 and n=32.")
+    if tuple(int(mode) for mode in modes) != EXPECTED_VERTICAL_MODES:
+        raise ValueError(
+            "Movie archive must contain vertical modes n=4, n=16 and n=32."
+        )
     if model_names != ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]:
         raise ValueError("Movie model order changed.")
     if fields.shape[:3] != (modes.size, times.size, len(model_names)):
@@ -471,6 +474,7 @@ def render_title_frame(
     *,
     mode: int,
     chapter: int,
+    chapter_count: int,
     resolution: tuple[int, int],
     dpi: int,
 ) -> None:
@@ -509,7 +513,7 @@ def render_title_frame(
         figure.text(
             0.5,
             0.32,
-            f"Chapter {chapter} of 2  |  0-50 inertial periods",
+            f"Chapter {chapter} of {chapter_count}  |  0-50 inertial periods",
             ha="center",
             va="center",
             fontsize=20.0,
@@ -729,7 +733,13 @@ def representative_segments(
             and np.isclose(segment["time_ip"], time_ip)
         )
 
-    transition = next(
+    transition_16 = next(
+        segment
+        for segment in segments
+        if segment["kind"] == "chapter_title"
+        and segment["vertical_mode"] == 16
+    )
+    transition_32 = next(
         segment
         for segment in segments
         if segment["kind"] == "chapter_title"
@@ -740,7 +750,10 @@ def representative_segments(
         ("n=4, t=10 IP", scientific(4, 10.0)),
         ("n=4, t=25 IP", scientific(4, 25.0)),
         ("n=4, t=50 IP", scientific(4, 50.0)),
-        ("Chapter transition", transition),
+        ("Transition to n=16", transition_16),
+        ("n=16, t=25 IP", scientific(16, 25.0)),
+        ("n=16, t=50 IP", scientific(16, 50.0)),
+        ("Transition to n=32", transition_32),
         ("n=32, t=50 IP", scientific(32, 50.0)),
     ]
 
@@ -826,7 +839,12 @@ def create_qc_contact_sheet(
             "savefig.facecolor": "white",
         }
     ):
-        figure, axes = plt.subplots(2, len(labels), figsize=(24, 7.0), dpi=100)
+        figure, axes = plt.subplots(
+            2,
+            len(labels),
+            figsize=(4.0 * len(labels), 7.0),
+            dpi=100,
+        )
         for column, label in enumerate(labels):
             axes[0, column].imshow(thumbnail(reference_paths[column], (420, 236)))
             axes[1, column].imshow(thumbnail(encoded_paths[column], (420, 236)))
@@ -869,7 +887,7 @@ def clipping_text(metadata: dict[str, Any]) -> str:
     """Return a concise clipping disclosure for captions and notes."""
     records = metadata["color_limits"]["clipping"]
     pieces = []
-    for mode in ("4", "32"):
+    for mode in (str(value) for value in metadata["vertical_modes"]):
         absolute = records[mode]["absolute_field"]
         difference = records[mode]["difference_field"]
         pieces.append(
@@ -899,9 +917,9 @@ def write_auxiliary_files(
     caption = (
         "Movie 2. Evolution of the horizontal wave-velocity field in the "
         "sinusoidal-dipole background flow for YBJ, TSB, YBJ+, PSE and the "
-        "hydrostatic Boussinesq equations (HBEs). The two sequential chapters "
-        "show vertical modes $$n=4$$ and $$n=32$$ from 0 to 50 inertial "
-        "periods (IP). The upper row is "
+        "hydrostatic Boussinesq equations (HBEs). The three sequential chapters "
+        "show vertical modes $$n=4$$, $$n=16$$ and $$n=32$$ from 0 to 50 "
+        "inertial periods (IP). The upper row is "
         "$$|\\phi|^2/|\\phi_{\\mathrm{amp}}|^2$$ in the model order YBJ, TSB, "
         "YBJ+, PSE and HBEs. The first four panels of the lower row are the "
         "named model minus HBEs for the same normalised squared magnitude; "
@@ -921,8 +939,9 @@ def write_auxiliary_files(
 
     accessibility = (
         "Accessibility description for movie 2\n\n"
-        "The movie has two chapters, first n=4 and then n=32. Each scientific "
-        "frame is a two-row, five-column layout on a white background. The "
+        "The movie has three chapters, in the order n=4, n=16 and n=32. Each "
+        "scientific frame is a two-row, five-column layout on a white "
+        "background. The "
         "current mode and time in inertial periods are written in a large "
         "heading at the top. In the upper row, left to right, square panels are "
         "labelled YBJ, TSB, YBJ+, PSE and HBEs. Purple-to-white-to-brown colour "
@@ -940,10 +959,12 @@ def write_auxiliary_files(
         "current time.\n\n"
         "For n=4, compact high-amplitude regions develop and strengthen, and "
         "the models increasingly differ in peak magnitude at long times while "
-        "remaining spatially aligned. For n=32, the absolute modulation is "
-        "weaker; the PSE and HBEs retain closely matched fine, diagonal and "
+        "remaining spatially aligned. The n=16 chapter shows the intermediate "
+        "regime: its modulation and model-minus-HBEs structure lie between the "
+        "strong localisation at n=4 and the weaker modulation at n=32. For "
+        "n=32, the PSE and HBEs retain closely matched fine, diagonal and "
         "curved structures, while the scalar-model difference panels and NRE "
-        "curves expose the smaller polarisation-related discrepancies. Static "
+        "curves expose smaller polarisation-related discrepancies. Static "
         "chapter title frames separate the modes; no morphing or field "
         "interpolation is used."
     )
@@ -1022,9 +1043,9 @@ def write_auxiliary_files(
         "- `movie2_render_manifest.json`: frame timing, fixed scales and encoder "
         "metadata.\n"
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
-        "The 51 physical states in each chapter are true saved integer-period "
-        "outputs from 0 to 50 IP. Video-frame holding controls playback speed; "
-        "no field interpolation is used."
+        "The three chapters show n=4, n=16 and n=32. Their 51 physical states "
+        "are true saved integer-period outputs from 0 to 50 IP. Video-frame "
+        "holding controls playback speed; no field interpolation is used."
     )
     (output_directory / "README.md").write_text(readme + "\n", encoding="utf-8")
 
@@ -1114,6 +1135,7 @@ def main() -> None:
                 title_path,
                 mode=int(mode),
                 chapter=chapter,
+                chapter_count=len(modes),
                 resolution=args.resolution,
                 dpi=args.dpi,
             )
@@ -1221,6 +1243,7 @@ def main() -> None:
             "frame_stride": args.frame_stride,
             "hold_frames": args.hold_frames,
             "title_frames": title_frames,
+            "vertical_modes": modes.tolist(),
             "selected_crf": selected_crf,
             "encoder": "libx264",
             "pixel_format": stream.get("pix_fmt"),
