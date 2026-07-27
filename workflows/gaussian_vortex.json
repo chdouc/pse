@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "name": "gaussian_vortex",
+  "description": "Gaussian-vortex eigenanalysis and Figures 6 and 7.",
+  "background_flow": "axisymmetric Gaussian vortex",
+  "figures": [6, 7],
+  "steps": [
+    {
+      "name": "compute_eigenanalysis",
+      "kind": "compute",
+      "script": "code/gaussian_vortex/compute_eigenanalysis.py",
+      "arguments": {
+        "basis_size": 512,
+        "radial_domain_over_length": 10.0,
+        "fixed_azimuthal_wavenumber": 0,
+        "fixed_vertical_mode": 4,
+        "vertical_mode_min": 1,
+        "vertical_mode_max": 32,
+        "azimuthal_wavenumber_min": -16,
+        "azimuthal_wavenumber_max": 16,
+        "mode_azimuthal_wavenumbers": [0, 1, 2, 3],
+        "mode_vertical_mode": 4,
+        "mode_frequency_min": -0.5,
+        "mode_frequency_max": 0.5,
+        "mode_radial_grid_size": 1201,
+        "output": "code/gaussian_vortex/data/gaussian_vortex_eigenanalysis.npz"
+      }
+    },
+    {
+      "name": "plot_spectrum",
+      "kind": "plot",
+      "script": "code/gaussian_vortex/plot_spectrum.py",
+      "supports_no_tex": true,
+      "arguments": {
+        "input": "code/gaussian_vortex/data/gaussian_vortex_eigenanalysis.npz",
+        "output": "code/gaussian_vortex/figures/gaussian_vortex_spectrum",
+        "colormap": "code/common/custom_gradient_32_to_256.mat",
+        "vertical_frequency_min": -0.5,
+        "vertical_frequency_max": 0.5,
+        "azimuthal_frequency_min": -0.5,
+        "azimuthal_frequency_max": 0.5,
+        "ratio_min": 0.0,
+        "ratio_max": 0.4,
+        "fixed_azimuthal_wavenumber": 0,
+        "fixed_vertical_mode": 4
+      }
+    },
+    {
+      "name": "plot_eigenfunctions",
+      "kind": "plot",
+      "script": "code/gaussian_vortex/plot_eigenfunctions.py",
+      "supports_no_tex": true,
+      "arguments": {
+        "input": "code/gaussian_vortex/data/gaussian_vortex_eigenanalysis.npz",
+        "output": "code/gaussian_vortex/figures/gaussian_vortex_eigenfunctions"
+      }
+    }
+  ],
+  "validation": {
+    "type": "gaussian_vortex",
+    "data": "code/gaussian_vortex/data/gaussian_vortex_eigenanalysis.npz",
+    "metadata": "code/gaussian_vortex/data/gaussian_vortex_eigenanalysis.json",
+    "figure_stems": [
+      "code/gaussian_vortex/figures/gaussian_vortex_spectrum",
+      "code/gaussian_vortex/figures/gaussian_vortex_eigenfunctions"
+    ]
+  }
+}

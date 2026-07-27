@@ -1,0 +1,11 @@
+# Python caches and local tooling
+__pycache__/
+*.py[cod]
+.ruff_cache/
+
+# Reproducible calculation and figure outputs
+code/*/data/
+code/*/figures/
+
+# Local workflow inputs
+*.local.json

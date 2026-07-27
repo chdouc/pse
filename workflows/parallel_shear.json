@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "parallel_shear",
+  "description": "Parallel-shear eigenanalysis and Figures 4 and 5.",
+  "background_flow": "sinusoidal parallel shear",
+  "figures": [4, 5],
+  "steps": [
+    {
+      "name": "compute_eigenanalysis",
+      "kind": "compute",
+      "script": "code/parallel_shear/compute_eigenanalysis.py",
+      "arguments": {
+        "truncation": 48,
+        "wavenumber_min": -3.0,
+        "wavenumber_max": 3.0,
+        "wavenumber_count": 161,
+        "vertical_mode": 4,
+        "mode_min": 1,
+        "mode_max": 32,
+        "mode_step": 1,
+        "fixed_wavenumber": 0.0,
+        "overlay_wavenumbers": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "overlay_selected_count": 5,
+        "overlay_skip_count": 2,
+        "overlay_frequency_min": -0.2,
+        "overlay_frequency_max": 1.5,
+        "overlay_grid_size": 900,
+        "output": "code/parallel_shear/data/parallel_shear_eigenanalysis.npz"
+      }
+    },
+    {
+      "name": "plot_spectrum",
+      "kind": "plot",
+      "script": "code/parallel_shear/plot_spectrum.py",
+      "supports_no_tex": true,
+      "arguments": {
+        "input": "code/parallel_shear/data/parallel_shear_eigenanalysis.npz",
+        "output": "code/parallel_shear/figures/parallel_shear_spectrum",
+        "colormap": "code/common/custom_gradient_32_to_256.mat",
+        "frequency_min": -0.2,
+        "frequency_max": 1.0,
+        "ratio_min": 0.0,
+        "ratio_max": 0.4,
+        "fixed_vertical_mode": 4
+      }
+    },
+    {
+      "name": "plot_eigenfunctions",
+      "kind": "plot",
+      "script": "code/parallel_shear/plot_eigenfunctions.py",
+      "supports_no_tex": true,
+      "arguments": {
+        "input": "code/parallel_shear/data/parallel_shear_eigenanalysis.npz",
+        "output": "code/parallel_shear/figures/parallel_shear_eigenfunctions"
+      }
+    }
+  ],
+  "validation": {
+    "type": "parallel_shear",
+    "data": "code/parallel_shear/data/parallel_shear_eigenanalysis.npz",
+    "metadata": "code/parallel_shear/data/parallel_shear_eigenanalysis.json",
+    "figure_stems": [
+      "code/parallel_shear/figures/parallel_shear_spectrum",
+      "code/parallel_shear/figures/parallel_shear_eigenfunctions"
+    ]
+  }
+}

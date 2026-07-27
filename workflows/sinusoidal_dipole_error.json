@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "name": "sinusoidal_dipole_error",
+  "description": "Sinusoidal-dipole model-error comparison and Figure 8.",
+  "background_flow": "sinusoidal dipole",
+  "figures": [8],
+  "models": ["YBJ", "TSB", "YBJ+", "PSE"],
+  "controlled_comparison": {
+    "background_velocity_m_s": 0.25,
+    "averaging_windows_in_inertial_periods": [[0.0, 10.0], [0.0, 50.0]]
+  },
+  "steps": [
+    {
+      "name": "compute_error_statistics",
+      "kind": "compute",
+      "script": "code/sinusoidal_dipole/compute_error_statistics.py",
+      "arguments": {
+        "index": "${index}",
+        "output": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv"
+      }
+    },
+    {
+      "name": "plot_error_statistics",
+      "kind": "plot",
+      "script": "code/sinusoidal_dipole/plot_error_statistics.py",
+      "arguments": {
+        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv",
+        "output": "code/sinusoidal_dipole/figures/sinusoidal_dipole_error_statistics"
+      }
+    }
+  ],
+  "validation": {
+    "type": "sinusoidal_dipole_error",
+    "data": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv",
+    "figure_stems": [
+      "code/sinusoidal_dipole/figures/sinusoidal_dipole_error_statistics"
+    ]
+  }
+}

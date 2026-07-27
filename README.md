@@ -1,132 +1,180 @@
 # Supplementary code for polarisation-resolved near-inertial wave dynamics
 
-This repository contains the analysis and plotting scripts accompanying the
-manuscript:
+This repository contains the calculation and plotting scripts accompanying
+the manuscript:
 
 > **A spinor formalism for polarisation-resolved near-inertial wave dynamics**
 
-The code is organized by background-flow type. Computation and plotting are
-kept in separate scripts so that numerical results can be generated once and
-then reused to reproduce the figures.
+The repository is organized by background-flow type rather than manuscript
+figure number. Numerical calculations and figure generation are separate, so
+calculation outputs can be inspected, validated, and reused without repeating
+the expensive eigensystem or simulation-data processing steps.
+
+## Design
+
+Each manuscript case has a version-controlled workflow in `workflows/`.
+A workflow records the physical and numerical parameters, calculation step,
+plotting steps, expected outputs, and validation method. All steps are invoked
+through `run_workflow.py`; no source file is modified when parameters change.
+
+The workflow layer provides:
+
+- one explicit parameter record for each manuscript case;
+- controlled comparisons using the same input conditions;
+- independent `compute`, `plot`, and `all` stages;
+- a dry-run mode that displays commands before execution;
+- automated checks of output structure and selected reference values.
+
+The individual scripts remain directly executable and can still be used
+without the workflow runner.
 
 ## Repository structure
 
 ```text
-code/
-├── common/
-│   └── custom_gradient_32_to_256.mat
-├── parallel_shear/
-│   ├── compute_eigenanalysis.py
-│   ├── plot_spectrum.py
-│   └── plot_eigenfunctions.py
-├── gaussian_vortex/
-│   ├── compute_eigenanalysis.py
-│   ├── plot_spectrum.py
-│   └── plot_eigenfunctions.py
-└── sinusoidal_dipole/
-    ├── compute_error_statistics.py
-    ├── plot_error_statistics.py
-    ├── compute_wave_velocity_fields.py
-    └── plot_wave_velocity_fields.py
+.
+|-- README.md
+|-- requirements.txt
+|-- run_workflow.py
+|-- validate_outputs.py
+|-- workflows/
+|   |-- parallel_shear.json
+|   |-- gaussian_vortex.json
+|   |-- sinusoidal_dipole_error.json
+|   `-- sinusoidal_dipole_wave.json
+`-- code/
+    |-- common/
+    |   `-- custom_gradient_32_to_256.mat
+    |-- parallel_shear/
+    |   |-- compute_eigenanalysis.py
+    |   |-- plot_spectrum.py
+    |   `-- plot_eigenfunctions.py
+    |-- gaussian_vortex/
+    |   |-- compute_eigenanalysis.py
+    |   |-- plot_spectrum.py
+    |   `-- plot_eigenfunctions.py
+    `-- sinusoidal_dipole/
+        |-- compute_error_statistics.py
+        |-- plot_error_statistics.py
+        |-- compute_wave_velocity_fields.py
+        `-- plot_wave_velocity_fields.py
 ```
 
-| Background flow | Calculation | Figure generation |
+| Workflow | Calculation | Manuscript figures |
 | --- | --- | --- |
-| Parallel shear | Eigenvalue spectra and selected eigenfunctions | Figures 4 and 5 |
-| Gaussian vortex | Radial eigenvalue spectra and selected eigenfunctions | Figures 6 and 7 |
-| Sinusoidal dipole | Model-error statistics and squared wave-velocity fields | Figures 8–10 |
+| `parallel_shear` | Eigenvalue spectra and selected eigenfunctions | 4 and 5 |
+| `gaussian_vortex` | Radial eigenvalue spectra and selected eigenfunctions | 6 and 7 |
+| `sinusoidal_dipole_error` | Controlled model-error comparison | 8 |
+| `sinusoidal_dipole_wave` | Controlled squared wave-velocity comparison | 9 and 10 |
 
-Figure numbers are provided only as manuscript cross-references. Script names
-describe the associated background flow and calculation.
+Figure numbers are manuscript cross-references only. File and directory names
+describe the corresponding background flow and calculation.
 
 ## Requirements
 
-The scripts require Python 3.10 or later and the following packages:
-
-- NumPy 2.0 or later
-- SciPy
-- Matplotlib
-- h5py
-- pandas
-
-Install the dependencies with:
+The scripts require Python 3.10 or later. Install the tested runtime
+dependencies with:
 
 ```bash
-python -m pip install "numpy>=2.0" scipy matplotlib h5py pandas
+python -m pip install -r requirements.txt
 ```
 
-The publication-style plots use LaTeX by default. If a LaTeX installation is
-not available, pass `--no-tex` to the plotting scripts that provide this
-option.
+On Windows, activate the intended Conda or virtual environment first. If
+`python --version` opens the Microsoft Store or prints no version, the
+Microsoft Store placeholder is being selected instead of a Python
+installation.
+
+The publication-style plots use LaTeX by default. If LaTeX and the required
+font packages are unavailable, add `--no-tex` to the workflow command.
 
 ## Quick start
 
-Clone the repository and enter its root directory:
+Clone the repository and list the available workflows:
 
 ```bash
 git clone https://github.com/chdouc/pse.git
 cd pse
+python run_workflow.py --list
 ```
 
-### Parallel shear
+### Self-contained eigenanalysis workflows
 
-Generate the numerical data:
+Run the complete parallel-shear calculation, create the figures, and validate
+the outputs:
 
 ```bash
-python code/parallel_shear/compute_eigenanalysis.py
+python run_workflow.py parallel_shear --validate
 ```
 
-Create the spectrum and eigenfunction figures:
+Run the corresponding Gaussian-vortex workflow:
 
 ```bash
-python code/parallel_shear/plot_spectrum.py
-python code/parallel_shear/plot_eigenfunctions.py
+python run_workflow.py gaussian_vortex --validate
 ```
 
-### Gaussian vortex
+The Gaussian-vortex workflow uses the manuscript's 512-mode Bessel-Galerkin
+discretization and is the most computationally demanding calculation.
 
-Generate the numerical data:
+### Sinusoidal-dipole workflows
 
-```bash
-python code/gaussian_vortex/compute_eigenanalysis.py
-```
-
-Create the spectrum and eigenfunction figures:
-
-```bash
-python code/gaussian_vortex/plot_spectrum.py
-python code/gaussian_vortex/plot_eigenfunctions.py
-```
-
-The default Gaussian-vortex calculation uses a 512-mode Bessel–Galerkin
-discretization and is the most computationally demanding calculation in the
-repository.
-
-### Sinusoidal dipole
-
-These scripts require the simulation index tables and MATLAB v7.3/HDF5 output
+These workflows require simulation index tables and the MATLAB v7.3/HDF5
 files used in the manuscript.
 
-Compute and plot the model-error statistics:
+Compute and plot the model-error comparison:
 
 ```bash
-python code/sinusoidal_dipole/compute_error_statistics.py \
-    --index path/to/error_index.csv
-python code/sinusoidal_dipole/plot_error_statistics.py
+python run_workflow.py sinusoidal_dipole_error --index path/to/error_index.csv --validate
 ```
 
-Extract and plot the squared wave-velocity fields:
+Extract and plot the squared wave-velocity comparison:
 
 ```bash
-python code/sinusoidal_dipole/compute_wave_velocity_fields.py \
-    --index path/to/wave_field_index.csv
-python code/sinusoidal_dipole/plot_wave_velocity_fields.py
+python run_workflow.py sinusoidal_dipole_wave --index path/to/wave_field_index.csv --validate
 ```
+
+On systems without LaTeX, for example:
+
+```bash
+python run_workflow.py parallel_shear --no-tex --validate
+```
+
+## Workflow controls
+
+Run only the calculation or plotting stage:
+
+```bash
+python run_workflow.py parallel_shear --stage compute
+python run_workflow.py parallel_shear --stage plot
+```
+
+Inspect the exact commands without executing them:
+
+```bash
+python run_workflow.py parallel_shear --dry-run
+```
+
+Validate previously generated results:
+
+```bash
+python validate_outputs.py parallel_shear
+python validate_outputs.py all
+```
+
+Use `--data-only` to validate calculation outputs without requiring figure
+files:
+
+```bash
+python validate_outputs.py gaussian_vortex --data-only
+```
+
+Run any individual script with `--help` to inspect its lower-level numerical
+and plotting options.
+
+## Sinusoidal-dipole inputs
 
 The `data_mat` entries in an index table may be absolute paths or paths
 relative to the index file.
 
-The error-statistics index must contain the columns:
+The error-statistics index must contain:
 
 ```text
 Ro, background_velocity_mps, Lv_m, data_mat
@@ -138,30 +186,38 @@ The wave-field index must contain:
 background_velocity_mps, Lv_m, data_mat
 ```
 
+The error comparison holds the background speed and averaging windows fixed
+while comparing YBJ, TSB, YBJ+, and PSE. The wave-field comparison uses the
+same saved cases and ordering for YBJ, TSB, YBJ+, PSE, and the hydrostatic
+Boussinesq equations.
+
 ## Outputs
 
-Calculation scripts write reusable data files to a `data/` directory beside
-the corresponding scripts:
+Calculation scripts write reusable data beside the corresponding background
+flow:
 
 - compressed NumPy archives (`.npz`) for eigenanalysis and wave fields;
 - comma-separated values (`.csv`) for error statistics;
-- JSON metadata files for the eigenanalysis calculations.
+- JSON metadata files for eigenanalysis parameters.
 
-Plotting scripts read these files and write publication figures to a
-neighboring `figures/` directory. Figure stems and input/output paths can be
-changed with command-line options. Run any script with `--help` to see all
-available parameters.
+Plotting scripts read these files and write PNG and PDF figures to a
+neighboring `figures/` directory. Generated `data/` and `figures/` directories
+are excluded from version control because they can be recreated by the
+configured workflows.
 
-## Reproducibility checks
+## Validation
 
-The reorganized scripts were checked against the original calculation and
-plotting scripts used for the manuscript:
+`validate_outputs.py` checks:
 
-- eigenvalues, eigenvectors, error statistics, and wave fields agreed
-  numerically;
-- the parallel-shear and Gaussian-vortex reference figures were reproduced
-  pixel for pixel;
-- the sinusoidal-dipole error figure was reproduced pixel for pixel.
+- required arrays, table columns, dimensions, and model ordering;
+- finite and physically admissible values;
+- consistency between coordinates, modes, fields, and metadata;
+- selected Gaussian-vortex eigenfrequencies;
+- the reference wave-field maxima for vertical mode 4 at 50 inertial periods;
+- the presence of both PNG and PDF figure outputs.
 
-The numerical calculations were not changed during the separation of
-calculation and plotting workflows.
+During repository preparation, the reorganized scripts were also compared
+with the original manuscript scripts. Eigenvalues, eigenvectors, error
+statistics, and wave fields agreed numerically. The parallel-shear,
+Gaussian-vortex, and sinusoidal-dipole error reference figures were reproduced
+pixel for pixel.
