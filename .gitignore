@@ -9,3 +9,6 @@ code/*/figures/
 
 # Local workflow inputs
 *.local.json
+
+# Temporary visual-quality-control renders
+tmp/

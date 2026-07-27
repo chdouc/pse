@@ -119,6 +119,11 @@ def run_workflow(args: argparse.Namespace) -> None:
 
     replacements = {
         "index": str(args.index) if args.index is not None else None,
+        "output_directory": (
+            str(args.output_directory)
+            if args.output_directory is not None
+            else None
+        ),
     }
     for step in steps:
         command = build_command(
@@ -136,6 +141,10 @@ def run_workflow(args: argparse.Namespace) -> None:
             str(ROOT / "validate_outputs.py"),
             args.workflow,
         ]
+        if args.output_directory is not None:
+            validation_command.extend(
+                ("--output-directory", str(args.output_directory))
+            )
         if args.stage == "compute":
             validation_command.append("--data-only")
         subprocess.run(validation_command, cwd=ROOT, check=True)
@@ -161,6 +170,14 @@ def parse_args() -> argparse.Namespace:
         "--index",
         type=Path,
         help="Simulation index required by sinusoidal-dipole calculations.",
+    )
+    parser.add_argument(
+        "--output-directory",
+        type=Path,
+        help=(
+            "Output directory required by workflows that create external "
+            "submission artifacts."
+        ),
     )
     parser.add_argument(
         "--no-tex",

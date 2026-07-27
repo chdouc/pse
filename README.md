@@ -39,6 +39,7 @@ without the workflow runner.
 |-- workflows/
 |   |-- parallel_shear.json
 |   |-- gaussian_vortex.json
+|   |-- polarisation_geometry_movie.json
 |   |-- sinusoidal_dipole_error.json
 |   `-- sinusoidal_dipole_wave.json
 `-- code/
@@ -52,6 +53,10 @@ without the workflow runner.
     |   |-- compute_eigenanalysis.py
     |   |-- plot_spectrum.py
     |   `-- plot_eigenfunctions.py
+    |-- polarisation_geometry/
+    |   |-- compute_polarisation_trajectories.py
+    |   |-- render_polarisation_movie.py
+    |   `-- README.md
     `-- sinusoidal_dipole/
         |-- compute_error_statistics.py
         |-- plot_error_statistics.py
@@ -63,6 +68,7 @@ without the workflow runner.
 | --- | --- | --- |
 | `parallel_shear` | Eigenvalue spectra and selected eigenfunctions | 4 and 5 |
 | `gaussian_vortex` | Radial eigenvalue spectra and selected eigenfunctions | 6 and 7 |
+| `polarisation_geometry_movie` | Stokes-Poincare geometry and exact matrix-generator actions | Figures 1 and 2; supplementary movie 1 |
 | `sinusoidal_dipole_error` | Controlled model-error comparison | 8 |
 | `sinusoidal_dipole_wave` | Controlled squared wave-velocity comparison | 9 and 10 |
 
@@ -137,6 +143,36 @@ On systems without LaTeX, for example:
 python run_workflow.py parallel_shear --no-tex --validate
 ```
 
+### Polarisation-geometry movie
+
+Supplementary movie 1 is self-contained and uses no simulation input. Supply
+the artifact directory at run time:
+
+```bash
+python run_workflow.py polarisation_geometry_movie \
+  --output-directory path/to/movies \
+  --validate
+```
+
+The calculation stage follows the manuscript spinor convention
+`|A> = (A_up, conj(A_down))^T`, saves every spinor, Stokes vector and physical
+hodograph used in the movie, and performs the matrix and polarisation-geometry
+checks. The rendering stage reads those saved arrays, encodes a silent
+MP4/H.264/yuv420p movie, verifies the stream and writes the separate JFM
+caption, accessibility description, submission notes and preview.
+
+The initial state is reconstructed from the Figure 2 source parameters:
+
+```text
+|S| = 1.21
+varphi = pi/2 - 2 atan(1/5)
+lambda = pi/3
+gamma = -pi/4
+```
+
+Chapter 1 uses normalised Stokes directions. Chapter 2 uses unnormalised
+Stokes vectors and retains the unit sphere only as a scale reference.
+
 ## Workflow controls
 
 Run only the calculation or plotting stage:
@@ -144,6 +180,18 @@ Run only the calculation or plotting stage:
 ```bash
 python run_workflow.py parallel_shear --stage compute
 python run_workflow.py parallel_shear --stage plot
+```
+
+For the movie workflow, pass the same output directory to either stage:
+
+```bash
+python run_workflow.py polarisation_geometry_movie \
+  --output-directory path/to/movies \
+  --stage compute
+
+python run_workflow.py polarisation_geometry_movie \
+  --output-directory path/to/movies \
+  --stage plot
 ```
 
 Inspect the exact commands without executing them:
@@ -164,6 +212,13 @@ files:
 
 ```bash
 python validate_outputs.py gaussian_vortex --data-only
+```
+
+Validate an existing movie output directory:
+
+```bash
+python validate_outputs.py polarisation_geometry_movie \
+  --output-directory path/to/movies
 ```
 
 Run any individual script with `--help` to inspect its lower-level numerical
@@ -205,6 +260,10 @@ neighboring `figures/` directory. Generated `data/` and `figures/` directories
 are excluded from version control because they can be recreated by the
 configured workflows.
 
+The movie workflow writes its archive, metadata, MP4, preview and text
+sidecars to the output directory supplied on the command line. These external
+submission artifacts are not committed to this repository.
+
 ## Validation
 
 `validate_outputs.py` checks:
@@ -215,6 +274,15 @@ configured workflows.
 - selected Gaussian-vortex eigenfrequencies;
 - the reference wave-field maxima for vertical mode 4 at 50 inertial periods;
 - the presence of both PNG and PDF figure outputs.
+- the manuscript matrix definitions, Clifford relations and exact matrix
+  exponentials used in supplementary movie 1;
+- the Stokes norm, handedness, ellipticity, orientation, common-phase and
+  generator-action identities;
+- consistency of every movie sphere vector and hodograph with the same saved
+  spinor state;
+- the MP4 container, H.264 profile, yuv420p pixel format, resolution, constant
+  frame rate, frame count, duration, absence of audio, fast-start ordering,
+  decodability and 50 MB size limit.
 
 During repository preparation, the reorganized scripts were also compared
 with the original manuscript scripts. Eigenvalues, eigenvectors, error

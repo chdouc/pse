@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
+import sys
 from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+from PIL import Image
 
 from run_workflow import ROOT, load_workflow, workflow_names
 
@@ -261,6 +264,122 @@ VALIDATORS: dict[str, Callable[[dict[str, Any]], None]] = {
 }
 
 
+def load_script_module(name: str, path: Path) -> Any:
+    """Load a repository script without making ``code`` a Python package."""
+    specification = importlib.util.spec_from_file_location(name, path)
+    if specification is None or specification.loader is None:
+        raise ImportError(f"Could not load script module: {path}")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+def validate_polarisation_geometry_movie(
+    specification: dict[str, Any],
+    *,
+    output_directory: Path | None,
+    data_only: bool,
+) -> None:
+    """Validate the movie-1 calculation, sidecars and encoded video."""
+    if output_directory is None:
+        raise ValueError(
+            "polarisation_geometry_movie validation requires --output-directory."
+        )
+    data_path = output_directory / specification["data_filename"]
+    metadata_path = output_directory / specification["metadata_filename"]
+    compute_module = load_script_module(
+        "polarisation_movie_compute",
+        ROOT
+        / "code"
+        / "polarisation_geometry"
+        / "compute_polarisation_trajectories.py",
+    )
+    metrics = compute_module.validate_saved_outputs(data_path, metadata_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata["validation"]["status"] != "passed":
+        raise ValueError("The saved mathematical-validation status is not passed.")
+
+    if data_only:
+        print(
+            "polarisation_geometry_movie: mathematical validation passed "
+            f"({len(metrics)} metrics)"
+        )
+        return
+
+    required = [
+        specification["movie_filename"],
+        *specification["required_sidecars"],
+    ]
+    for filename in required:
+        path = output_directory / filename
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError(f"Missing or empty movie-1 artifact: {path}")
+
+    preview_path = output_directory / "movie1_preview.png"
+    expected_preview_size = tuple(
+        metadata.get("video", {}).get(
+            key,
+            metadata["video_target"]["resolution"][index],
+        )
+        for index, key in enumerate(("width", "height"))
+    )
+    with Image.open(preview_path) as preview:
+        if preview.size != expected_preview_size:
+            raise ValueError(
+                "movie1_preview.png has size "
+                f"{preview.size}; expected {expected_preview_size}."
+            )
+
+    caption = (output_directory / "movie1_caption.txt").read_text(
+        encoding="utf-8"
+    )
+    if not caption.lower().startswith("movie 1."):
+        raise ValueError("The caption is not explicitly titled movie 1.")
+    if caption.count("$$") % 2:
+        raise ValueError("The movie caption contains unpaired $$ TeX delimiters.")
+
+    render_module = load_script_module(
+        "polarisation_movie_render",
+        ROOT
+        / "code"
+        / "polarisation_geometry"
+        / "render_polarisation_movie.py",
+    )
+    ffmpeg = render_module.locate_ffmpeg(None)
+    movie_path = output_directory / specification["movie_filename"]
+    video = render_module.probe_video(ffmpeg, movie_path)
+    saved_video = metadata.get("video")
+    if not saved_video:
+        raise ValueError("The movie metadata has no encoded-video record.")
+    render_module.validate_video_target(
+        video,
+        width=int(saved_video["width"]),
+        height=int(saved_video["height"]),
+        fps=int(round(saved_video["frame_rate_fps"])),
+        expected_frames=int(saved_video["expected_frame_count"]),
+    )
+    for key in (
+        "codec",
+        "profile",
+        "pixel_format",
+        "width",
+        "height",
+        "frame_count",
+        "audio_stream_present",
+        "file_size_bytes",
+        "faststart_moov_before_mdat",
+    ):
+        if video[key] != saved_video[key]:
+            raise ValueError(f"The probed video field differs from metadata: {key}")
+    print(
+        "polarisation_geometry_movie: validation passed "
+        f"({video['width']}x{video['height']}, "
+        f"{video['frame_rate_fps']:g} fps, "
+        f"{video['file_size_mb']:.3f} MB)"
+    )
+
+
 def validate_figures(specification: dict[str, Any]) -> None:
     """Require PNG and PDF output for every configured figure stem."""
     for relative_stem in specification.get("figure_stems", []):
@@ -271,10 +390,22 @@ def validate_figures(specification: dict[str, Any]) -> None:
                 raise FileNotFoundError(f"Missing figure output: {path}")
 
 
-def validate_workflow(name: str, *, data_only: bool) -> None:
+def validate_workflow(
+    name: str,
+    *,
+    data_only: bool,
+    output_directory: Path | None = None,
+) -> None:
     """Validate one configured workflow."""
     workflow = load_workflow(name)
     specification = workflow["validation"]
+    if specification["type"] == "polarisation_geometry_movie":
+        validate_polarisation_geometry_movie(
+            specification,
+            output_directory=output_directory,
+            data_only=data_only,
+        )
+        return
     validator = VALIDATORS[specification["type"]]
     validator(specification)
     if not data_only:
@@ -298,6 +429,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate numerical data without requiring figure files.",
     )
+    parser.add_argument(
+        "--output-directory",
+        type=Path,
+        help="External artifact directory used by movie workflows.",
+    )
     return parser.parse_args()
 
 
@@ -306,7 +442,11 @@ def main() -> None:
     args = parse_args()
     names = workflow_names() if args.workflow == "all" else [args.workflow]
     for name in names:
-        validate_workflow(name, data_only=args.data_only)
+        validate_workflow(
+            name,
+            data_only=args.data_only,
+            output_directory=args.output_directory,
+        )
 
 
 if __name__ == "__main__":

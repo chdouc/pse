@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "name": "polarisation_geometry_movie",
+  "description": "Supplementary movie 1: Stokes-Poincare mapping and matrix-basis actions.",
+  "background_flow": "local polarisation geometry (no background-flow simulation)",
+  "figures": [1, 2],
+  "supplementary_movie": 1,
+  "spinor_convention": "|A> = (A_up, conj(A_down))^T",
+  "steps": [
+    {
+      "name": "compute_polarisation_trajectories",
+      "kind": "compute",
+      "script": "code/polarisation_geometry/compute_polarisation_trajectories.py",
+      "arguments": {
+        "output_directory": "${output_directory}",
+        "sample_count": 481,
+        "fast_phase_count": 361
+      }
+    },
+    {
+      "name": "render_polarisation_movie",
+      "kind": "plot",
+      "script": "code/polarisation_geometry/render_polarisation_movie.py",
+      "supports_no_tex": true,
+      "arguments": {
+        "output_directory": "${output_directory}",
+        "width": 1920,
+        "height": 1080,
+        "fps": 24,
+        "crf": 20
+      }
+    }
+  ],
+  "validation": {
+    "type": "polarisation_geometry_movie",
+    "uses_output_directory": true,
+    "data_filename": "movie1_data.npz",
+    "metadata_filename": "movie1_metadata.json",
+    "movie_filename": "movie1.mp4",
+    "required_sidecars": [
+      "movie1_preview.png",
+      "movie1_caption.txt",
+      "movie1_accessibility_description.txt",
+      "movie1_submission_notes.txt",
+      "movie1_manuscript_reference_suggestion.txt",
+      "movie1_validation_summary.txt",
+      "movie1_visual_inspection.txt",
+      "README.md"
+    ]
+  }
+}
