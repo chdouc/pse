@@ -221,7 +221,10 @@ Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`,
 Movie 2 holds each terminal case frame for an additional 1.5 seconds. Its
 typography, model colours and NRE legend order are aligned with
 manuscript figures 8--10; its chapter cards also give the corresponding
-vertical wavelengths for the common 4000-m depth. The
+vertical wavelengths for the common 4000-m depth. Difference colourbars use
+the explicit model-minus-HBEs normalised squared-velocity expression, and the
+curve panel is labelled as instantaneous NRE to distinguish it from the
+time-averaged NRE in manuscript figure 8. The
 submission workflow restricts the frame rate to 20--24 fps and always encodes
 H.264/yuv420p with a constant frame rate, fast start, and no audio stream.
 

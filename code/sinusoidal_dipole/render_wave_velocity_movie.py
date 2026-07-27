@@ -273,7 +273,7 @@ class ChapterRenderer:
         self.figure.text(
             0.014,
             0.635,
-            "Normalised power",
+            "Normalised squared velocity",
             rotation=90,
             ha="center",
             va="center",
@@ -337,7 +337,11 @@ class ChapterRenderer:
 
         nre_axis = self.axes[1, 4]
         nre_axis.set_box_aspect(1)
-        nre_axis.set_title("NRE relative to HBEs", pad=7.0)
+        nre_axis.set_title(
+            "Instantaneous NRE relative to HBEs",
+            fontsize=14.0,
+            pad=7.0,
+        )
         nre_axis.set_xlabel(r"$t$ (IP)", labelpad=3.0)
         nre_axis.set_ylabel("NRE (%)", labelpad=3.0)
         nre_axis.set_xlim(0.0, 50.0)
@@ -460,7 +464,10 @@ class ChapterRenderer:
             FuncFormatter(colorbar_number)
         )
         difference_colorbar.set_label(
-            r"$\Delta(|\phi|^2/|\phi_{\mathrm{amp}}|^2)$",
+            (
+                r"$(|\phi_{\mathrm{model}}|^2-|\phi_{\mathrm{HBEs}}|^2)"
+                r"/|\phi_{\mathrm{amp}}|^2$"
+            ),
             rotation=90,
             labelpad=8.0,
         )
@@ -492,7 +499,7 @@ class ChapterRenderer:
             )
         self.time_line.set_xdata([time_value, time_value])
         self.title.set_text(
-            rf"Supplementary movie 2  |  $n={self.mode}$  |  "
+            rf"Supplementary movie 2: $n={self.mode}$, "
             rf"$t={time_value:g}$ IP"
         )
 
@@ -549,15 +556,18 @@ def render_title_frame(
         figure.text(
             0.5,
             0.43,
-            rf"$n={mode}$  |  $h={wavelength_metres}\,\mathrm{{m}}$",
+            (
+                rf"Vertical mode $n={mode}$; vertical wavelength "
+                rf"$h={wavelength_metres}\,\mathrm{{m}}$"
+            ),
             ha="center",
             va="center",
-            fontsize=42.0,
+            fontsize=30.0,
         )
         figure.text(
             0.5,
             0.32,
-            f"Chapter {chapter} of {chapter_count}  |  0-50 inertial periods",
+            f"Chapter {chapter} of {chapter_count}; 0-50 inertial periods",
             ha="center",
             va="center",
             fontsize=20.0,
@@ -993,9 +1003,11 @@ def write_auxiliary_files(
         "$$h=125\\,\\mathrm{m}$$. The upper row is "
         "$$|\\phi|^2/|\\phi_{\\mathrm{amp}}|^2$$ in the model order YBJ, TSB, "
         "YBJ+, PSE and HBEs. The first four panels of the lower row are the "
-        "named model minus HBEs for the same normalised squared magnitude; "
-        "the final panel shows the complex-velocity normalised root-mean-square "
-        "error relative to HBEs, with moving markers at the displayed time. "
+        "named model minus HBEs, explicitly "
+        "$$(|\\phi_{\\mathrm{model}}|^2-|\\phi_{\\mathrm{HBEs}}|^2)"
+        "/|\\phi_{\\mathrm{amp}}|^2$$; the final panel shows the instantaneous "
+        "complex-velocity normalised root-mean-square error relative to HBEs, "
+        "with moving markers at the displayed time. "
         "The NRE vertical axis spans 0--40% for $$n=4$$ and 0--10% for "
         "$$n=16$$ and $$n=32$$; these mode-specific limits remain fixed "
         "within their chapters. "
@@ -1031,12 +1043,14 @@ def write_auxiliary_files(
         "velocity, with the same scale for all five models throughout a "
         "chapter. In the lower row, the first four square panels are explicitly "
         "labelled YBJ minus HBEs, TSB minus HBEs, YBJ+ minus HBEs and PSE minus "
-        "HBEs. Blue and red sides of a zero-centred diverging scale indicate "
-        "negative and positive differences; the signs, panel positions and "
-        "labels make the comparisons understandable without relying on colour "
-        "alone. The lower-right panel plots NRE against time. YBJ is a blue "
-        "solid line with circles, TSB a purple dashed line with triangles, "
-        "YBJ+ a green solid line with plus signs, and PSE a red solid line with "
+        "HBEs. The lower-row colour scale is the displayed model's normalised "
+        "squared velocity minus the HBEs normalised squared velocity. Blue and "
+        "red sides of its zero-centred diverging scale indicate negative and "
+        "positive differences; the signs, panel positions and labels make the "
+        "comparisons understandable without relying on colour alone. The "
+        "lower-right panel plots instantaneous NRE against time. YBJ is a blue "
+        "solid line with circles, TSB a purple dashed line with triangles, YBJ+ "
+        "a green solid line with plus signs, and PSE a red solid line with "
         "squares. A vertical dotted line and enlarged symbols identify the "
         "current time.\n\n"
         "For n=4, compact high-amplitude regions develop and strengthen, and "
@@ -1131,9 +1145,11 @@ def write_auxiliary_files(
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
         "The three chapters show n=4, n=16 and n=32, with the manuscript "
         "vertical wavelengths 1000 m, 250 m and 125 m, "
-        "respectively. The NRE y-axis is fixed at 0--40% for n=4 and 0--10% "
-        "for n=16 and n=32. The 51 physical states in each chapter are true "
-        "saved integer-period outputs from 0 to 50 IP. Video-frame "
+        "respectively. The curve panel shows instantaneous NRE, distinct from "
+        "the time-averaged NRE in manuscript figure 8. Its y-axis is fixed at "
+        "0--40% for n=4 and 0--10% for n=16 and n=32. The 51 physical states "
+        "in each chapter are true saved integer-period outputs from 0 to 50 IP. "
+        "Video-frame "
         f"holding controls playback speed; each terminal state is held for an "
         f"additional {chapter_end_seconds:g} seconds, and no field "
         "interpolation is used."
@@ -1410,6 +1426,13 @@ def main() -> None:
                     for mode, wavelength in VERTICAL_WAVELENGTH_METRES.items()
                 },
                 "nre_y_limits_percent": nre_y_limits_percent,
+                "upper_row_quantity": "|phi|^2/|phi_amp|^2",
+                "difference_quantity": (
+                    "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2"
+                ),
+                "nre_quantity": (
+                    "instantaneous complex-velocity NRE relative to HBEs"
+                ),
             },
             "physical_field_interpolation": False,
             "ffmpeg_attempts": [

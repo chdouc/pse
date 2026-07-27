@@ -82,6 +82,9 @@ EXPECTED_STYLE_ALIGNMENT = {
         "16": [0.0, 10.0],
         "32": [0.0, 10.0],
     },
+    "upper_row_quantity": "|phi|^2/|phi_amp|^2",
+    "difference_quantity": "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2",
+    "nre_quantity": "instantaneous complex-velocity NRE relative to HBEs",
 }
 REQUIRED_OUTPUTS = (
     "movie2.mp4",
@@ -407,6 +410,15 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         or "0--10%" not in caption
     ):
         raise ValueError("Caption does not document the mode-specific NRE axes.")
+    if (
+        "instantaneous complex-velocity" not in caption
+        or "\\phi_{\\mathrm{model}}" not in caption
+        or "\\phi_{\\mathrm{HBEs}}" not in caption
+    ):
+        raise ValueError(
+            "Caption does not distinguish instantaneous NRE or define the "
+            "model-minus-HBEs field explicitly."
+        )
     if "additional 1.5 seconds" not in accessibility:
         raise ValueError(
             "Accessibility description does not document the chapter-end holds."
@@ -429,6 +441,10 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
     if "supplementary movie 2" not in reference.lower():
         raise ValueError("Suggested manuscript reference does not name movie 2.")
     combined = "\n".join((caption, accessibility, submission, reference, readme))
+    if "\\Delta" in combined or "Δ" in combined:
+        raise ValueError(
+            "An ambiguous uppercase delta symbol appears in public-facing text."
+        )
     if re.search(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]", combined):
         raise ValueError("A local absolute path leaked into a public-facing text file.")
     return {
@@ -436,6 +452,8 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         "caption_tex_delimiter_count": caption.count("$$"),
         "official_jfm_links_present": True,
         "local_absolute_paths_absent": True,
+        "ambiguous_uppercase_delta_absent": True,
+        "instantaneous_nre_distinguished": True,
     }
 
 
