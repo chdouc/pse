@@ -43,7 +43,7 @@ ANGLE_ORANGE = "#b85900"
 ANGLE_ORANGE_FILL = "#fcd7b3"
 CAMERA_AZIMUTH = 110.75
 CAMERA_ELEVATION = 30.85
-CHAPTER_ONE_PHASE_PERIOD_SECONDS = 7.0
+CHAPTER_ONE_PHASE_SEGMENT_SECONDS = 7.0
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -272,6 +272,16 @@ def plain_dynamic_text(text: mpl.text.Text) -> mpl.text.Text:
     text.set_usetex(False)
     text.set_fontfamily("serif")
     return text
+
+
+def final_phase_gamma_schedule(frame_count: int, fixed_gamma: float) -> np.ndarray:
+    """Return one uniform clockwise gamma turn followed by an exact reset."""
+    if frame_count < 2:
+        raise ValueError("The final phase turn requires at least two frames.")
+    progress = np.arange(frame_count, dtype=float) / (frame_count - 1)
+    displayed_gamma = fixed_gamma - 2.0 * np.pi * progress
+    displayed_gamma[-1] = fixed_gamma
+    return displayed_gamma
 
 
 @dataclass
@@ -539,7 +549,7 @@ def make_chapter_one(
 
         spinor_axis.text(
             0.5,
-            0.86,
+            0.73,
             r"$\left|\mathscr{A}\right\rangle=$",
             ha="center",
             va="center",
@@ -547,7 +557,7 @@ def make_chapter_one(
         )
         spinor_axis.text(
             0.12,
-            0.625,
+            0.49,
             "(",
             ha="center",
             va="center",
@@ -556,7 +566,7 @@ def make_chapter_one(
         )
         spinor_axis.text(
             0.88,
-            0.625,
+            0.49,
             ")",
             ha="center",
             va="center",
@@ -566,7 +576,7 @@ def make_chapter_one(
         spinor_top = plain_dynamic_text(
             spinor_axis.text(
                 0.5,
-                0.685,
+                0.55,
                 "",
                 ha="center",
                 va="center",
@@ -577,7 +587,7 @@ def make_chapter_one(
         spinor_bottom = plain_dynamic_text(
             spinor_axis.text(
                 0.5,
-                0.565,
+                0.43,
                 "",
                 ha="center",
                 va="center",
@@ -585,41 +595,6 @@ def make_chapter_one(
                 color=BLACK,
             )
         )
-        spinor_axis.text(
-            0.5,
-            0.355,
-            r"$\phi=u+\mathrm{i}v$",
-            ha="center",
-            va="center",
-            fontsize=17,
-        )
-        spinor_axis.text(
-            0.5,
-            0.265,
-            r"$=\mathscr{A}_\uparrow\mathrm{e}^{-\mathrm{i}ft}$",
-            ha="center",
-            va="center",
-            fontsize=15,
-        )
-        spinor_axis.text(
-            0.5,
-            0.195,
-            r"$+\mathscr{A}_\downarrow\mathrm{e}^{\mathrm{i}ft}$",
-            ha="center",
-            va="center",
-            fontsize=15,
-        )
-        spinor_axis.text(
-            0.5,
-            0.075,
-            r"$\left|\mathscr{A}\right\rangle"
-            r":=(\mathscr{A}_\uparrow,\mathscr{A}_\downarrow^\ast)^{\mathsf{T}}$",
-            ha="center",
-            va="center",
-            fontsize=12.5,
-            color="0.25",
-        )
-
         figure.text(
             0.5,
             0.945,
@@ -953,7 +928,7 @@ def set_chapter_one_frame(
     stage: str,
     index: int,
     *,
-    phase_angle: float,
+    displayed_gamma: float,
     landmark_label: str | None = None,
 ) -> None:
     """Update the two-panel mapping layout from saved arrays."""
@@ -975,7 +950,7 @@ def set_chapter_one_frame(
 
     values = hodographs[index]
     fast_phase = arrays["fast_phase"]
-    target_phase = float((gamma[index] + phase_angle) % (2.0 * np.pi))
+    target_phase = float((gamma[index] - displayed_gamma) % (2.0 * np.pi))
     phase_difference = np.angle(np.exp(1j * (fast_phase - target_phase)))
     phase_index = int(np.argmin(np.abs(phase_difference)))
     marker = np.array(
@@ -1057,7 +1032,7 @@ def set_chapter_one_frame(
     tangent_b = np.cross(current_stokes, tangent_a)
     tangent_b /= np.linalg.norm(tangent_b)
     phase_direction = -1.0 if current_stokes[2] >= 0.0 else 1.0
-    directed_phase = phase_direction * phase_angle
+    directed_phase = phase_direction * (-displayed_gamma)
     gamma_radius = 0.15
     gamma_theta = np.linspace(0.0, directed_phase, 121)
     gamma_points_3d = current_stokes + gamma_radius * (
@@ -1155,12 +1130,10 @@ def set_chapter_one_frame(
             np.cos(marker_angle - orientation),
         )
     )
-    if phase_angle < 1.0e-10:
-        gamma_delta = 0.0
-    elif phase_direction < 0.0:
-        gamma_delta = -float((-raw_gamma_delta) % (2.0 * np.pi))
-    else:
-        gamma_delta = float(raw_gamma_delta % (2.0 * np.pi))
+    branch_candidates = raw_gamma_delta + 2.0 * np.pi * np.arange(-2.0, 3.0)
+    gamma_delta = float(
+        branch_candidates[np.argmin(np.abs(branch_candidates - directed_phase))]
+    )
     hodograph_gamma_radius = 0.54
     hodograph_gamma_theta = np.linspace(
         orientation,
@@ -1211,14 +1184,13 @@ def set_chapter_one_frame(
             r"Changing $\lambda$ rotates the ellipse through $\lambda/2$."
         )
     elif stage == "phase":
-        artists.subtitle.set_text("Common phase")
+        artists.subtitle.set_text("Fixed polarisation: one phase turn")
         artists.explanation.set_text(
-            r"The phase runs uniformly; the unit Stokes vector and "
-            r"ellipse geometry remain fixed."
+            r"$|\mathscr{A}\rangle$, the unit Stokes vector and the ellipse "
+            r"are fixed; only $\gamma$ advances uniformly and synchronously."
         )
     else:
         raise ValueError(f"Unknown chapter-one stage: {stage}")
-    displayed_gamma = phase_direction * phase_angle
     artists.parameter_text.set_text(
         rf"$\varphi={np.degrees(varphi[index]):.1f}^\circ,\quad"
         rf"\lambda={np.degrees(longitude[index]):.1f}^\circ,\quad"
@@ -1578,12 +1550,12 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector $$\widehat{\mathbf S}$$ and displays the corresponding numerical spinor between the two panels. It maps this state to $$\phi=u+\mathrm i v=\mathscr A_\uparrow\exp(-\mathrm i f t)+\mathscr A_\downarrow\exp(\mathrm i f t)$$. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and the phase coordinate $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. The phase advances uniformly at $$2\pi/7$$ radians per second of movie time and resets after each turn. Northern-hemisphere states run clockwise; southern-hemisphere states run counter-clockwise. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector $$\widehat{\mathbf S}$$ and displays only the corresponding numerical spinor between the two panels. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. The right-panel white point, blue arrow and blue arc remain at a fixed phase during the landmark, ellipticity and orientation sections. In the final fixed-polarisation section, the numerical spinor, unit Stokes vector and ellipse are held fixed while only the displayed $$\gamma$$ completes one uniform clockwise turn; the left and right phase indicators are synchronised and reset together. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
     accessibility = """Accessibility description for movie 1
 
 The movie has a white background, dark serif labels and fixed axes. It has no audio. Blue solid curves and circular markers are always labelled as the positive generator direction. Red dashed curves and square markers are always labelled as the negative generator direction, so the two directions can be distinguished without colour.
 
-Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red unit Stokes arrow and a white outlined endpoint. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The centre shows the current two numerical entries of the spinor (A_up, conjugate(A_down)) and the equation phi=u+i v=A_up exp(-i f t)+A_down exp(i f t). The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. A black hodograph, a white outlined instantaneous-position marker and a blue arrow from the origin to that marker are shown. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. The phase marker advances at a constant rate throughout Chapter 1; the blue sectors reset after each seven-second turn. At the north pole the hodograph is a clockwise circle; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. During the ellipticity segment the ellipse changes shape and handedness. During the orientation segment the ellipse rotates while its shape is fixed. During the common-phase segment the sphere arrow and full ellipse stay fixed while the phase motion continues at the same rate.
+Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red unit Stokes arrow and a white outlined endpoint. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The centre shows only the current two numerical entries of the spinor; no spinor-definition or phi equation is displayed. The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. A black hodograph, a white outlined instantaneous-position marker and a blue arrow from the origin to that marker are shown. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. During the landmark, ellipticity and orientation sections, gamma is held fixed, so the right marker, arrow and phase arc have no independent phase motion. At the north pole the hodograph is a clockwise circle; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. In the final fixed-polarisation section, the numerical spinor, unit Stokes arrow, ellipse shape and ellipse orientation remain fixed. Only gamma changes uniformly for one clockwise turn. The left and right blue arcs and the right marker and arrow are synchronised frame by frame, then reset together.
 
 Chapter 2 uses four columns and two rows. Columns are labelled sigma_0, sigma_1, sigma_2 and sigma_3. The top row contains pale grey unit spheres and unnormalised Stokes vectors; the bottom row contains equal-aspect hodographs. Every column begins at the same white outlined state. In the sigma_0 column the Stokes vector changes radially and the hodograph changes scale. In the sigma_1 column the Stokes vector moves around a constant-latitude circle and the hodograph rotates without changing ellipticity. In the sigma_2 and sigma_3 columns the vector follows non-compact stretching paths and the two rotary components mix, visibly changing the hodograph shape and orientation. Axis limits and camera views remain fixed throughout each chapter."""
     manuscript_reference = (
@@ -1640,7 +1612,10 @@ Spinor, Stokes and hodograph checks
 - Saved hodograph/same-spinor error: {validation["saved_hodograph_same_spinor_error"]:.3e}
 - North-pole signed area: {validation["north_clockwise_signed_area"]:.6f} (negative means clockwise)
 - South-pole signed area: {validation["south_counterclockwise_signed_area"]:.6f} (positive means counter-clockwise)
-- Chapter 1 phase period/angular speed: {CHAPTER_ONE_PHASE_PERIOD_SECONDS:.1f} s / {2.0 * np.pi / CHAPTER_ONE_PHASE_PERIOD_SECONDS:.9f} rad s^-1
+- Final fixed-polarisation gamma turn: one uniform clockwise turn in the {CHAPTER_ONE_PHASE_SEGMENT_SECONDS:.1f} s segment
+- Displayed spinor fixed during the final gamma turn: {metadata["display"]["chapter_1_final_gamma_spinor_is_fixed"]}
+- Left/right gamma indicators use one shared schedule: {metadata["display"]["chapter_1_gamma_indicators_synchronised"]}
+- Circular gamma-step maximum error: {metadata["display"]["chapter_1_gamma_circular_step_error_radians"]:.3e} rad
 
 Video checks
 - Codec/pixel format: {video["codec"]} / {video["pixel_format"]}
@@ -1655,6 +1630,7 @@ Video checks
 Reference comparison
 - Figure 1 was rendered before production. The movie uses the same left-right Stokes-sphere/hodograph logic, white background, serif mathematical typography, pale grey sphere, black hodograph and white outlined state marker.
 - Chapter 1 also reproduces the reference green lambda, orange varphi and blue gamma angle sectors, with half-angle labels on the hodograph.
+- The centre contains only the numerical spinor; the definition and phi equation are intentionally omitted.
 - Figure 2 was rendered before production. Chapter 2 uses the same four generator columns, Stokes panels above hodograph panels, blue positive direction, red negative direction and common white initial state. Dashed red versus solid blue line style and square versus circular markers add colour-independent identification.
 
 Representative encoded frames inspected
@@ -1664,7 +1640,7 @@ Representative encoded frames inspected
 - 12.6 s: south-pole counter-clockwise circular polarisation.
 - 16.5 s: ellipticity scan.
 - 23.5 s: longitude-driven ellipse rotation.
-- 30.5 s: common-phase motion with fixed Stokes vector and ellipse.
+- 30.5 s: final gamma turn with fixed numerical spinor, Stokes vector and ellipse.
 - 34.7 s: transition between chapters.
 - 36.1 s: common initial frame for all four generators.
 - 43.0 s: intermediate generator actions.
@@ -1676,8 +1652,11 @@ Checks and result
 - Clockwise/counter-clockwise handedness: passed.
 - Sphere and hodograph synchronisation: passed.
 - Unit-vector normalisation on the Chapter 1 Bloch sphere: passed.
-- Numerical spinor entries and the displayed spinor convention: passed.
-- Uniform seven-second phase turns and blue-arc reset: passed.
+- Numerical spinor entries: passed.
+- Spinor constancy throughout the final gamma turn: passed.
+- Gamma held fixed before the final fixed-polarisation section: passed.
+- One uniform final gamma turn and blue-arc reset: passed.
+- Left/right gamma synchronisation: passed.
 - Northern-hemisphere clockwise and southern-hemisphere counter-clockwise motion: passed.
 - Blue hodograph arrow terminates at the white phase marker: passed.
 - Fixed camera, projection and axis limits within each chapter: passed.
@@ -1712,7 +1691,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the unit Bloch/Stokes vector, the corresponding numerical spinor, all three angle arcs, and a uniformly advancing seven-second phase cycle. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the unit Bloch/Stokes vector, the corresponding numerical spinor and all three angle arcs. Gamma is fixed during the first three sections; only the final fixed-polarisation section contains one synchronised gamma turn, while the numerical spinor remains fixed. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -1834,16 +1813,7 @@ def render_movie(
     for _ in range(frame_counts["chapter1_title"]):
         send(chapter1_title)
 
-    chapter_one_frame = 0
-
-    def current_phase_angle() -> float:
-        elapsed = chapter_one_frame / fps
-        return float(
-            2.0
-            * np.pi
-            * ((elapsed / CHAPTER_ONE_PHASE_PERIOD_SECONDS) % 1.0)
-        )
-
+    fixed_gamma = float(arrays["initial_gamma"])
     count = frame_counts["landmark"]
     for frame_index in range(count):
         progress = frame_index / max(count - 1, 1)
@@ -1854,13 +1824,12 @@ def render_movie(
             arrays,
             "landmark",
             data_index,
-            phase_angle=current_phase_angle(),
+            displayed_gamma=fixed_gamma,
             landmark_label=label,
         )
         send(canvas_rgb(chapter_one.figure))
-        chapter_one_frame += 1
 
-    for stage in ("ellipticity", "orientation", "phase"):
+    for stage in ("ellipticity", "orientation"):
         count = frame_counts[stage]
         for frame_index in range(count):
             progress = frame_index / max(count - 1, 1)
@@ -1871,10 +1840,21 @@ def render_movie(
                 arrays,
                 stage,
                 data_index,
-                phase_angle=current_phase_angle(),
+                displayed_gamma=fixed_gamma,
             )
             send(canvas_rgb(chapter_one.figure))
-            chapter_one_frame += 1
+
+    count = frame_counts["phase"]
+    phase_gamma = final_phase_gamma_schedule(count, fixed_gamma)
+    for displayed_gamma in phase_gamma:
+        set_chapter_one_frame(
+            chapter_one,
+            arrays,
+            "phase",
+            0,
+            displayed_gamma=displayed_gamma,
+        )
+        send(canvas_rgb(chapter_one.figure))
 
     for _ in range(frame_counts["chapter2_title"]):
         send(chapter2_title)
@@ -1982,13 +1962,38 @@ def main() -> None:
         "expected_frame_count": total_frames,
         "ffmpeg_build": Path(ffmpeg).name,
     }
-    metadata.setdefault("display", {}).update(
+    phase_frame_count = int(round(CHAPTER_ONE_PHASE_SEGMENT_SECONDS * args.fps))
+    phase_schedule = final_phase_gamma_schedule(
+        phase_frame_count,
+        float(arrays["initial_gamma"]),
+    )
+    circular_steps = np.angle(np.exp(1j * np.diff(phase_schedule)))
+    expected_step = -2.0 * np.pi / (phase_frame_count - 1)
+    phase_step_error = float(np.max(np.abs(circular_steps - expected_step)))
+    display_metadata = metadata.setdefault("display", {})
+    for obsolete_key in (
+        "chapter_1_phase_period_seconds",
+        "chapter_1_phase_angular_speed_radians_per_second",
+        "chapter_1_phase_resets_after_radians",
+    ):
+        display_metadata.pop(obsolete_key, None)
+    display_metadata.update(
         {
-            "chapter_1_phase_period_seconds": CHAPTER_ONE_PHASE_PERIOD_SECONDS,
-            "chapter_1_phase_angular_speed_radians_per_second": (
-                2.0 * np.pi / CHAPTER_ONE_PHASE_PERIOD_SECONDS
+            "chapter_1_final_gamma_segment_seconds": (
+                CHAPTER_ONE_PHASE_SEGMENT_SECONDS
             ),
-            "chapter_1_phase_resets_after_radians": 2.0 * np.pi,
+            "chapter_1_final_gamma_frame_count": phase_frame_count,
+            "chapter_1_final_gamma_angular_speed_radians_per_second": (
+                abs(expected_step) * args.fps
+            ),
+            "chapter_1_gamma_circular_step_error_radians": phase_step_error,
+            "chapter_1_gamma_fixed_before_final_turn": True,
+            "chapter_1_final_gamma_spinor_is_fixed": True,
+            "chapter_1_final_gamma_spinor_source_index": 0,
+            "chapter_1_final_gamma_spinor_variation": 0.0,
+            "chapter_1_gamma_indicators_synchronised": True,
+            "chapter_1_center_displays_numerical_spinor": True,
+            "chapter_1_center_displays_definition_or_phi_equation": False,
             "chapter_1_northern_hemisphere_motion": "clockwise",
             "chapter_1_southern_hemisphere_motion": "counter-clockwise",
         }
