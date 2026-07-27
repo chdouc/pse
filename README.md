@@ -218,7 +218,10 @@ python run_workflow.py sinusoidal_dipole_movie \
 
 Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`,
 `--chapter-end-seconds`, and `--crf` to override movie-rendering defaults.
-Movie 2 holds each terminal case frame for an additional 1.5 seconds. The
+Movie 2 holds each terminal case frame for an additional 1.5 seconds. Its
+typography, model colours and NRE legend order are aligned with
+manuscript figures 8--10; its chapter cards also give the corresponding
+vertical wavelengths for the common 4000-m depth. The
 submission workflow restricts the frame rate to 20--24 fps and always encodes
 H.264/yuv420p with a constant frame rate, fast start, and no audio stream.
 

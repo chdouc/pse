@@ -37,11 +37,28 @@ DEFAULT_INPUT = (
 )
 MAX_FILE_BYTES = 50_000_000
 EXPECTED_VERTICAL_MODES = (4, 16, 32)
+PREFERRED_TEXT_FONT = "Times New Roman"
+MOVIE_FONT_STACK = (
+    PREFERRED_TEXT_FONT,
+    "Times",
+    "STIXGeneral",
+    "DejaVu Serif",
+)
+VERTICAL_WAVELENGTH_METRES = {
+    4: 1000,
+    16: 250,
+    32: 125,
+}
 MODEL_STYLES = (
     ("YBJ", "#002BFF", "o", "-"),
     ("TSB", "#7A3E9D", "^", "--"),
-    ("YBJ+", "#00A85A", "+", "-"),
+    ("YBJ+", "#00C46A", "+", "-"),
     ("PSE", "#B2182B", "s", "-"),
+)
+NRE_LEGEND_HANDLE_ORDER = (0, 2, 1, 3)
+NRE_LEGEND_VISUAL_ROWS = (
+    ("YBJ", "TSB"),
+    ("YBJ+", "PSE"),
 )
 JFM_PREPARING_URL = (
     "https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/"
@@ -182,6 +199,19 @@ def colorbar_number(value: float, _: int) -> str:
     return f"{value:.2f}"
 
 
+def movie_publication_style() -> dict[str, object]:
+    """Return the movie typography aligned with manuscript figures 8--10."""
+    style = publication_style(use_tex=False)
+    style.update(
+        {
+            "font.family": "serif",
+            "font.serif": list(MOVIE_FONT_STACK),
+            "mathtext.fontset": "stix",
+        }
+    )
+    return style
+
+
 class ChapterRenderer:
     """Maintain one chapter figure while updating only time-dependent artists."""
 
@@ -204,7 +234,7 @@ class ChapterRenderer:
         self.difference_limits = data["difference_color_limits"][mode_index]
         width, height = resolution
 
-        style = publication_style(use_tex=False)
+        style = movie_publication_style()
         style.update(
             {
                 "font.size": 15.0,
@@ -226,12 +256,12 @@ class ChapterRenderer:
         grid = self.figure.add_gridspec(
             2,
             5,
-            left=0.052,
-            right=0.902,
-            bottom=0.105,
-            top=0.835,
-            wspace=0.16,
-            hspace=0.30,
+            left=0.040,
+            right=0.918,
+            bottom=0.095,
+            top=0.850,
+            wspace=0.10,
+            hspace=0.24,
         )
         self.axes = np.asarray(
             [
@@ -355,7 +385,20 @@ class ChapterRenderer:
             linestyle=":",
             zorder=2,
         )
+        legend_handles = [
+            self.nre_lines[index] for index in NRE_LEGEND_HANDLE_ORDER
+        ]
+        legend_labels = [
+            (
+                r"YBJ$^{+}$"
+                if MODEL_STYLES[index][0] == "YBJ+"
+                else MODEL_STYLES[index][0]
+            )
+            for index in NRE_LEGEND_HANDLE_ORDER
+        ]
         nre_axis.legend(
+            legend_handles,
+            legend_labels,
             loc="upper left",
             ncol=2,
             frameon=True,
@@ -371,10 +414,10 @@ class ChapterRenderer:
         top_position = self.axes[0, -1].get_position()
         bottom_position = self.axes[1, -2].get_position()
         absolute_cax = self.figure.add_axes(
-            [0.922, top_position.y0, 0.010, top_position.height]
+            [0.938, top_position.y0, 0.010, top_position.height]
         )
         difference_cax = self.figure.add_axes(
-            [0.922, bottom_position.y0, 0.010, bottom_position.height]
+            [0.938, bottom_position.y0, 0.010, bottom_position.height]
         )
         absolute_colorbar = self.figure.colorbar(
             self.absolute_images[-1],
@@ -480,7 +523,8 @@ def render_title_frame(
 ) -> None:
     """Render a static chapter title without interpolating physical fields."""
     width, height = resolution
-    with plt.rc_context(publication_style(use_tex=False)):
+    wavelength_metres = VERTICAL_WAVELENGTH_METRES[mode]
+    with plt.rc_context(movie_publication_style()):
         figure = plt.figure(
             figsize=(width / dpi, height / dpi),
             dpi=dpi,
@@ -505,7 +549,7 @@ def render_title_frame(
         figure.text(
             0.5,
             0.43,
-            rf"$n={mode}$",
+            rf"$n={mode}$  |  $h={wavelength_metres}\,\mathrm{{m}}$",
             ha="center",
             va="center",
             fontsize=42.0,
@@ -943,12 +987,18 @@ def write_auxiliary_files(
         "sinusoidal-dipole background flow for YBJ, TSB, YBJ+, PSE and the "
         "hydrostatic Boussinesq equations (HBEs). The three sequential chapters "
         "show vertical modes $$n=4$$, $$n=16$$ and $$n=32$$ from 0 to 50 "
-        "inertial periods (IP). The upper row is "
+        "inertial periods (IP). For the common depth "
+        "$$H=4000\\,\\mathrm{m}$$, their respective vertical wavelengths are "
+        "$$h=1000\\,\\mathrm{m}$$, $$h=250\\,\\mathrm{m}$$ and "
+        "$$h=125\\,\\mathrm{m}$$. The upper row is "
         "$$|\\phi|^2/|\\phi_{\\mathrm{amp}}|^2$$ in the model order YBJ, TSB, "
         "YBJ+, PSE and HBEs. The first four panels of the lower row are the "
         "named model minus HBEs for the same normalised squared magnitude; "
         "the final panel shows the complex-velocity normalised root-mean-square "
         "error relative to HBEs, with moving markers at the displayed time. "
+        "The NRE vertical axis spans 0--40% for $$n=4$$ and 0--10% for "
+        "$$n=16$$ and $$n=32$$; these mode-specific limits remain fixed "
+        "within their chapters. "
         "Within each mode, absolute and difference colour limits are fixed for "
         "the complete movie; difference limits are symmetric about zero. The "
         f"movie uses every {sample_interval:g}-IP saved state in strictly "
@@ -967,6 +1017,11 @@ def write_auxiliary_files(
     accessibility = (
         "Accessibility description for movie 2\n\n"
         "The movie has three chapters, in the order n=4, n=16 and n=32. Each "
+        "chapter title also gives the corresponding vertical wavelength: "
+        "1000 m, 250 m and 125 m, respectively, for the common 4000-m depth. "
+        "The NRE vertical axis spans 0 to 40% for n=4 and 0 to 10% for n=16 "
+        "and n=32; each range stays fixed throughout its chapter. "
+        "Each "
         "scientific frame is a two-row, five-column layout on a white "
         "background. The "
         "current mode and time in inertial periods are written in a large "
@@ -1074,8 +1129,11 @@ def write_auxiliary_files(
         "- `movie2_render_manifest.json`: frame timing, fixed scales and encoder "
         "metadata.\n"
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
-        "The three chapters show n=4, n=16 and n=32. Their 51 physical states "
-        "are true saved integer-period outputs from 0 to 50 IP. Video-frame "
+        "The three chapters show n=4, n=16 and n=32, with the manuscript "
+        "vertical wavelengths 1000 m, 250 m and 125 m, "
+        "respectively. The NRE y-axis is fixed at 0--40% for n=4 and 0--10% "
+        "for n=16 and n=32. The 51 physical states in each chapter are true "
+        "saved integer-period outputs from 0 to 50 IP. Video-frame "
         f"holding controls playback speed; each terminal state is held for an "
         f"additional {chapter_end_seconds:g} seconds, and no field "
         "interpolation is used."
@@ -1279,6 +1337,16 @@ def main() -> None:
             or len(sequence_sources)
         )
         duration = float(probe["format"]["duration"])
+        nre_y_limits_percent = {
+            str(int(mode)): [
+                0.0,
+                nice_nre_upper(
+                    float(np.max(data["nre_complex_relative_l2"][mode_index]))
+                    * 100.0
+                ),
+            ]
+            for mode_index, mode in enumerate(modes)
+        }
         manifest = {
             "schema_version": 1,
             "product": "supplementary movie 2",
@@ -1326,6 +1394,23 @@ def main() -> None:
             "fixed_difference_color_limits": data[
                 "difference_color_limits"
             ].tolist(),
+            "style_alignment": {
+                "manuscript_figures": [8, 9, 10],
+                "preferred_text_font": PREFERRED_TEXT_FONT,
+                "font_stack": list(MOVIE_FONT_STACK),
+                "mathtext_fontset": "stix",
+                "model_colors": {
+                    label: color for label, color, _, _ in MODEL_STYLES
+                },
+                "nre_legend_visual_rows": [
+                    list(row) for row in NRE_LEGEND_VISUAL_ROWS
+                ],
+                "vertical_wavelength_metres": {
+                    str(mode): wavelength
+                    for mode, wavelength in VERTICAL_WAVELENGTH_METRES.items()
+                },
+                "nre_y_limits_percent": nre_y_limits_percent,
+            },
             "physical_field_interpolation": False,
             "ffmpeg_attempts": [
                 {

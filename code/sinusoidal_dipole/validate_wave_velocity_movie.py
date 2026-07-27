@@ -52,6 +52,37 @@ EXPECTED_T50_MAXIMA = np.asarray(
 EXPECTED_ABSOLUTE_LIMITS = np.asarray(
     [[0.01, 10.0], [0.50, 1.50], [0.88, 1.12]]
 )
+EXPECTED_STYLE_ALIGNMENT = {
+    "manuscript_figures": [8, 9, 10],
+    "preferred_text_font": "Times New Roman",
+    "font_stack": [
+        "Times New Roman",
+        "Times",
+        "STIXGeneral",
+        "DejaVu Serif",
+    ],
+    "mathtext_fontset": "stix",
+    "model_colors": {
+        "YBJ": "#002BFF",
+        "TSB": "#7A3E9D",
+        "YBJ+": "#00C46A",
+        "PSE": "#B2182B",
+    },
+    "nre_legend_visual_rows": [
+        ["YBJ", "TSB"],
+        ["YBJ+", "PSE"],
+    ],
+    "vertical_wavelength_metres": {
+        "4": 1000,
+        "16": 250,
+        "32": 125,
+    },
+    "nre_y_limits_percent": {
+        "4": [0.0, 40.0],
+        "16": [0.0, 10.0],
+        "32": [0.0, 10.0],
+    },
+}
 REQUIRED_OUTPUTS = (
     "movie2.mp4",
     "movie2_preview.png",
@@ -366,9 +397,26 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         raise ValueError("Caption does not document time coverage and sampling.")
     if "additional 36 frames (1.5 s)" not in caption:
         raise ValueError("Caption does not document the chapter-end still holds.")
+    for wavelength in (1000, 250, 125):
+        if f"h={wavelength}" not in caption:
+            raise ValueError(
+                f"Caption is missing the h={wavelength} m vertical wavelength."
+            )
+    if (
+        "NRE vertical axis spans 0--40%" not in caption
+        or "0--10%" not in caption
+    ):
+        raise ValueError("Caption does not document the mode-specific NRE axes.")
     if "additional 1.5 seconds" not in accessibility:
         raise ValueError(
             "Accessibility description does not document the chapter-end holds."
+        )
+    if (
+        "NRE vertical axis spans 0 to 40%" not in accessibility
+        or "0 to 10%" not in accessibility
+    ):
+        raise ValueError(
+            "Accessibility description omits the mode-specific NRE axes."
         )
     if "Clipping" not in caption:
         raise ValueError("Caption does not disclose clipping.")
@@ -495,6 +543,11 @@ def check_render_outputs(
         raise ValueError("Render manifest product label changed.")
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
+    style_alignment = manifest.get("style_alignment", {})
+    if style_alignment != EXPECTED_STYLE_ALIGNMENT:
+        raise ValueError(
+            "Movie style metadata no longer matches manuscript figures 8--10."
+        )
     chapter_end_frames = int(manifest.get("chapter_end_frames", 0))
     chapter_end_seconds = float(manifest.get("chapter_end_seconds", 0.0))
     expected_chapter_end_frames = int(
@@ -611,6 +664,7 @@ def check_render_outputs(
         "segments_cover_all_frames": True,
         "scientific_time_order": "strictly increasing within each chapter",
         "fixed_color_limits": True,
+        "style_alignment": style_alignment,
         "chapter_end_hold_seconds": chapter_end_seconds,
         "chapter_end_hold_frames_by_mode": chapter_end_holds,
         "encoded_chapter_end_static_checks": static_checks,
