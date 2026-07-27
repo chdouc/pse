@@ -14,6 +14,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent
 WORKFLOW_DIRECTORY = ROOT / "workflows"
 PLACEHOLDER_PATTERN = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}$")
+OPTIONAL_PLACEHOLDER_PATTERN = re.compile(
+    r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$"
+)
 
 
 def workflow_names() -> list[str]:
@@ -38,10 +41,14 @@ def load_workflow(name: str) -> dict[str, Any]:
     return workflow
 
 
-def substitute(value: Any, replacements: dict[str, str | None]) -> Any:
+def substitute(value: Any, replacements: dict[str, Any]) -> Any:
     """Replace a complete ``${name}`` placeholder in a configuration value."""
     if not isinstance(value, str):
         return value
+    optional_match = OPTIONAL_PLACEHOLDER_PATTERN.fullmatch(value)
+    if optional_match is not None:
+        return replacements.get(optional_match.group(1))
+
     match = PLACEHOLDER_PATTERN.fullmatch(value)
     if match is None:
         return value
@@ -58,7 +65,7 @@ def substitute(value: Any, replacements: dict[str, str | None]) -> Any:
 
 def argument_tokens(
     arguments: dict[str, Any],
-    replacements: dict[str, str | None],
+    replacements: dict[str, Any],
 ) -> list[str]:
     """Convert a JSON argument mapping to command-line tokens."""
     tokens: list[str] = []
@@ -82,17 +89,16 @@ def selected_steps(
     workflow: dict[str, Any],
     stage: str,
 ) -> list[dict[str, Any]]:
-    """Select calculation, plotting, or all workflow steps."""
+    """Select one workflow-step kind or every configured step."""
     if stage == "all":
         return workflow["steps"]
-    kind = "compute" if stage == "compute" else "plot"
-    return [step for step in workflow["steps"] if step["kind"] == kind]
+    return [step for step in workflow["steps"] if step["kind"] == stage]
 
 
 def build_command(
     step: dict[str, Any],
     *,
-    replacements: dict[str, str | None],
+    replacements: dict[str, Any],
     no_tex: bool,
 ) -> list[str]:
     """Build one Python command from a configured workflow step."""
@@ -119,11 +125,24 @@ def run_workflow(args: argparse.Namespace) -> None:
 
     replacements = {
         "index": str(args.index) if args.index is not None else None,
+        "data_root": (
+            str(args.data_root) if args.data_root is not None else None
+        ),
+        "raw_data_root": (
+            str(args.raw_data_root) if args.raw_data_root is not None else None
+        ),
         "output_directory": (
             str(args.output_directory)
             if args.output_directory is not None
             else None
         ),
+        "ffmpeg": str(args.ffmpeg) if args.ffmpeg is not None else None,
+        "ffprobe": str(args.ffprobe) if args.ffprobe is not None else None,
+        "fps": args.fps,
+        "resolution": args.resolution,
+        "frame_stride": args.frame_stride,
+        "hold_frames": args.hold_frames,
+        "crf": args.crf,
     }
     for step in steps:
         command = build_command(
@@ -162,14 +181,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--stage",
-        choices=("compute", "plot", "all"),
+        choices=("compute", "plot", "render", "validate", "all"),
         default="all",
-        help="Run only calculations, only plots, or the complete workflow.",
+        help="Run one configured step kind, or the complete workflow.",
     )
     parser.add_argument(
         "--index",
         type=Path,
         help="Simulation index required by sinusoidal-dipole calculations.",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        help="Simulation root containing a discoverable index.",
+    )
+    parser.add_argument(
+        "--raw-data-root",
+        type=Path,
+        help="Raw simulation root used by movie field reconstruction.",
     )
     parser.add_argument(
         "--output-directory",
@@ -178,6 +207,40 @@ def parse_args() -> argparse.Namespace:
             "Output directory required by workflows that create external "
             "submission artifacts."
         ),
+    )
+    parser.add_argument(
+        "--ffmpeg",
+        type=Path,
+        help="Optional FFmpeg executable path for movie workflows.",
+    )
+    parser.add_argument(
+        "--ffprobe",
+        type=Path,
+        help="Optional ffprobe executable path for movie workflows.",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        help="Movie frame-rate override.",
+    )
+    parser.add_argument(
+        "--resolution",
+        help="Movie resolution override in WIDTHxHEIGHT form.",
+    )
+    parser.add_argument(
+        "--frame-stride",
+        type=int,
+        help="Stride through computed physical movie states.",
+    )
+    parser.add_argument(
+        "--hold-frames",
+        type=int,
+        help="Number of CFR video frames used to hold each physical state.",
+    )
+    parser.add_argument(
+        "--crf",
+        type=int,
+        help="Initial H.264 constant-rate-factor value.",
     )
     parser.add_argument(
         "--no-tex",

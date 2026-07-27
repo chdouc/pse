@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "name": "sinusoidal_dipole_movie",
+  "description": "Supplementary movie 2: time-resolved sinusoidal-dipole wave-field comparison.",
+  "background_flow": "sinusoidal dipole",
+  "supplementary_item": "movie 2",
+  "models": ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"],
+  "controlled_comparison": {
+    "background_velocity_m_s": 0.25,
+    "vertical_modes": [4, 32],
+    "times_in_inertial_periods": [0.0, 50.0],
+    "physical_field_sample_interval_ip": 1.0,
+    "physical_field_interpolation": false,
+    "absolute_colormap": "twilight_shifted",
+    "difference_colormap": "RdBu_r"
+  },
+  "steps": [
+    {
+      "name": "compute_movie_fields",
+      "kind": "compute",
+      "script": "code/sinusoidal_dipole/compute_movie_fields.py",
+      "arguments": {
+        "index": "${index?}",
+        "data_root": "${data_root?}",
+        "raw_data_root": "${raw_data_root}",
+        "output": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
+        "start_ip": 0.0,
+        "stop_ip": 50.0,
+        "sample_interval_ip": 1.0,
+        "difference_quantile": 0.995
+      }
+    },
+    {
+      "name": "render_wave_velocity_movie",
+      "kind": "render",
+      "script": "code/sinusoidal_dipole/render_wave_velocity_movie.py",
+      "arguments": {
+        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
+        "output_directory": "${output_directory}",
+        "ffmpeg": "${ffmpeg?}",
+        "ffprobe": "${ffprobe?}",
+        "fps": "${fps?}",
+        "resolution": "${resolution?}",
+        "frame_stride": "${frame_stride?}",
+        "hold_frames": "${hold_frames?}",
+        "crf": "${crf?}"
+      }
+    },
+    {
+      "name": "validate_wave_velocity_movie",
+      "kind": "validate",
+      "script": "code/sinusoidal_dipole/validate_wave_velocity_movie.py",
+      "arguments": {
+        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
+        "output_directory": "${output_directory}",
+        "ffmpeg": "${ffmpeg?}",
+        "ffprobe": "${ffprobe?}"
+      }
+    }
+  ]
+}

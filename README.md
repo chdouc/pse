@@ -21,7 +21,7 @@ The workflow layer provides:
 
 - one explicit parameter record for each manuscript case;
 - controlled comparisons using the same input conditions;
-- independent `compute`, `plot`, and `all` stages;
+- independent `compute`, `plot`, `render`, `validate`, and `all` stages;
 - a dry-run mode that displays commands before execution;
 - automated checks of output structure and selected reference values.
 
@@ -41,7 +41,8 @@ without the workflow runner.
 |   |-- gaussian_vortex.json
 |   |-- polarisation_geometry_movie.json
 |   |-- sinusoidal_dipole_error.json
-|   `-- sinusoidal_dipole_wave.json
+|   |-- sinusoidal_dipole_wave.json
+|   `-- sinusoidal_dipole_movie.json
 `-- code/
     |-- common/
     |   `-- custom_gradient_32_to_256.mat
@@ -61,7 +62,10 @@ without the workflow runner.
         |-- compute_error_statistics.py
         |-- plot_error_statistics.py
         |-- compute_wave_velocity_fields.py
-        `-- plot_wave_velocity_fields.py
+        |-- plot_wave_velocity_fields.py
+        |-- compute_movie_fields.py
+        |-- render_wave_velocity_movie.py
+        `-- validate_wave_velocity_movie.py
 ```
 
 | Workflow | Calculation | Manuscript figures |
@@ -71,6 +75,7 @@ without the workflow runner.
 | `polarisation_geometry_movie` | Stokes-Poincare geometry and exact matrix-generator actions | Figures 1 and 2; supplementary movie 1 |
 | `sinusoidal_dipole_error` | Controlled model-error comparison | 8 |
 | `sinusoidal_dipole_wave` | Controlled squared wave-velocity comparison | 9 and 10 |
+| `sinusoidal_dipole_movie` | Time-resolved wave fields and NRE curves | Figures 9 and 10; supplementary movie 2 |
 
 Figure numbers are manuscript cross-references only. File and directory names
 describe the corresponding background flow and calculation.
@@ -137,6 +142,22 @@ Extract and plot the squared wave-velocity comparison:
 python run_workflow.py sinusoidal_dipole_wave --index path/to/wave_field_index.csv --validate
 ```
 
+Prepare, render, and validate supplementary movie 2:
+
+```bash
+python run_workflow.py sinusoidal_dipole_movie \
+  --data-root path/to/processed/sweep \
+  --raw-data-root path/to/raw/sweep \
+  --output-directory path/to/movies \
+  --ffmpeg path/to/ffmpeg \
+  --ffprobe path/to/ffprobe
+```
+
+The movie workflow accepts either `--data-root` (containing one
+`*_index.csv`) or `--index`. The raw root retains the PSE rotary components
+needed for explicit physical-velocity reconstruction. Local input paths are
+always supplied at run time and are not stored in the public workflow.
+
 On systems without LaTeX, for example:
 
 ```bash
@@ -181,6 +202,24 @@ Run only the calculation or plotting stage:
 python run_workflow.py parallel_shear --stage compute
 python run_workflow.py parallel_shear --stage plot
 ```
+
+Supplementary movie 2 additionally exposes independent render and validation
+stages:
+
+```bash
+python run_workflow.py sinusoidal_dipole_movie \
+  --output-directory path/to/movies \
+  --stage render
+
+python run_workflow.py sinusoidal_dipole_movie \
+  --output-directory path/to/movies \
+  --stage validate
+```
+
+Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`, and `--crf`
+to override movie-rendering defaults. The submission workflow restricts the
+frame rate to 20--24 fps and always encodes H.264/yuv420p with a constant
+frame rate, fast start, and no audio stream.
 
 For the movie workflow, pass the same output directory to either stage:
 
@@ -246,6 +285,13 @@ while comparing YBJ, TSB, YBJ+, and PSE. The wave-field comparison uses the
 same saved cases and ordering for YBJ, TSB, YBJ+, PSE, and the hydrostatic
 Boussinesq equations.
 
+Supplementary movie 2 uses modes `n=4` and `n=32`. Its intermediate NPZ
+records the true selected times, source indices and files, model order,
+normalisation, fixed colour limits, NRE curves, PSE reconstruction metadata,
+and raw-versus-processed reference checks. Physical fields are never
+interpolated; playback speed is controlled by holding or striding true saved
+states.
+
 ## Outputs
 
 Calculation scripts write reusable data beside the corresponding background
@@ -260,9 +306,12 @@ neighboring `figures/` directory. Generated `data/` and `figures/` directories
 are excluded from version control because they can be recreated by the
 configured workflows.
 
-The movie workflow writes its archive, metadata, MP4, preview and text
-sidecars to the output directory supplied on the command line. These external
-submission artifacts are not committed to this repository.
+Movie workflows write archives, metadata, MP4 files, previews and text
+sidecars to the output directory supplied on the command line. Supplementary
+movie 2 also writes a pre/post-encoding QC contact sheet, render manifest and
+quality report. Managed temporary PNG frames are removed after a successful
+encode. These external submission artifacts are not committed to this
+repository.
 
 ## Validation
 
@@ -280,6 +329,11 @@ submission artifacts are not committed to this repository.
   generator-action identities;
 - consistency of every movie sphere vector and hodograph with the same saved
   spinor state;
+- exact 0--50 IP source ordering, PSE reconstruction, 10 IP and 50 IP field
+  consistency, NRE agreement, fixed colour scales and symmetric difference
+  limits for supplementary movie 2;
+- representative movie-2 frames before and after encoding, including
+  compression PSNR and readable preview/contact-sheet dimensions;
 - the MP4 container, H.264 profile, yuv420p pixel format, resolution, constant
   frame rate, frame count, duration, absence of audio, fast-start ordering,
   decodability and 50 MB size limit.
