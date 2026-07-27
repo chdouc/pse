@@ -142,6 +142,7 @@ def run_workflow(args: argparse.Namespace) -> None:
         "resolution": args.resolution,
         "frame_stride": args.frame_stride,
         "hold_frames": args.hold_frames,
+        "chapter_end_seconds": args.chapter_end_seconds,
         "crf": args.crf,
     }
     for step in steps:
@@ -236,6 +237,11 @@ def parse_args() -> argparse.Namespace:
         "--hold-frames",
         type=int,
         help="Number of CFR video frames used to hold each physical state.",
+    )
+    parser.add_argument(
+        "--chapter-end-seconds",
+        type=float,
+        help="Additional still hold after each movie chapter.",
     )
     parser.add_argument(
         "--crf",

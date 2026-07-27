@@ -216,10 +216,11 @@ python run_workflow.py sinusoidal_dipole_movie \
   --stage validate
 ```
 
-Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`, and `--crf`
-to override movie-rendering defaults. The submission workflow restricts the
-frame rate to 20--24 fps and always encodes H.264/yuv420p with a constant
-frame rate, fast start, and no audio stream.
+Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`,
+`--chapter-end-seconds`, and `--crf` to override movie-rendering defaults.
+Movie 2 holds each terminal case frame for an additional 1.5 seconds. The
+submission workflow restricts the frame rate to 20--24 fps and always encodes
+H.264/yuv420p with a constant frame rate, fast start, and no audio stream.
 
 For the movie workflow, pass the same output directory to either stage:
 

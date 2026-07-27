@@ -251,6 +251,88 @@ def image_dimensions(path: Path) -> tuple[int, int]:
         return image.size
 
 
+def measure_encoded_static_range(
+    ffmpeg: Path,
+    video_path: Path,
+    *,
+    start_frame: int,
+    end_frame: int,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    """Measure decoded luma changes across one intended still-frame range."""
+    command = [
+        str(ffmpeg),
+        "-v",
+        "error",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"select=between(n\\,{start_frame}\\,{end_frame})",
+        "-vsync",
+        "0",
+        "-pix_fmt",
+        "gray",
+        "-f",
+        "rawvideo",
+        "-",
+    ]
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if process.stdout is None or process.stderr is None:
+        raise RuntimeError("Failed to open the decoded-frame validation stream.")
+
+    frame_size = width * height
+    previous: np.ndarray | None = None
+    adjacent_mae: list[float] = []
+    maximum_delta = 0
+    frame_count = 0
+    while True:
+        raw = process.stdout.read(frame_size)
+        if not raw:
+            break
+        while len(raw) < frame_size:
+            more = process.stdout.read(frame_size - len(raw))
+            if not more:
+                raise RuntimeError("Decoded still-frame stream ended mid-frame.")
+            raw += more
+        current = np.frombuffer(raw, dtype=np.uint8).astype(np.int16)
+        if previous is not None:
+            difference = np.abs(current - previous)
+            maximum_delta = max(maximum_delta, int(np.max(difference)))
+            adjacent_mae.append(float(np.mean(difference)))
+        previous = current
+        frame_count += 1
+
+    stderr = process.stderr.read().decode("utf-8", errors="replace")
+    return_code = process.wait()
+    if return_code != 0:
+        raise RuntimeError(
+            f"FFmpeg still-range decode failed with code {return_code}:\n{stderr}"
+        )
+    expected_count = end_frame - start_frame + 1
+    if frame_count != expected_count or not adjacent_mae:
+        raise ValueError(
+            f"Decoded {frame_count} still frames; expected {expected_count}."
+        )
+    mean_adjacent_mae = float(np.mean(adjacent_mae))
+    if mean_adjacent_mae > 0.02:
+        raise ValueError(
+            "Encoded chapter-end hold is not visually static: "
+            f"mean adjacent luma MAE {mean_adjacent_mae:.6f}."
+        )
+    return {
+        "start_frame": start_frame,
+        "end_frame": end_frame,
+        "decoded_frame_count": frame_count,
+        "maximum_adjacent_luma_delta": maximum_delta,
+        "mean_adjacent_luma_mae": mean_adjacent_mae,
+    }
+
+
 def check_text_outputs(output_directory: Path) -> dict[str, Any]:
     """Check labels, TeX delimiters, links, and absence of local paths."""
     caption = (output_directory / "movie2_caption.txt").read_text(encoding="utf-8")
@@ -282,6 +364,12 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
             raise ValueError(f"Caption is missing required term {term!r}.")
     if "0 to 50" not in caption or "does not interpolate" not in caption:
         raise ValueError("Caption does not document time coverage and sampling.")
+    if "additional 36 frames (1.5 s)" not in caption:
+        raise ValueError("Caption does not document the chapter-end still holds.")
+    if "additional 1.5 seconds" not in accessibility:
+        raise ValueError(
+            "Accessibility description does not document the chapter-end holds."
+        )
     if "Clipping" not in caption:
         raise ValueError("Caption does not disclose clipping.")
     if "without relying on colour alone" not in accessibility:
@@ -395,6 +483,7 @@ def check_media(
 def check_render_outputs(
     output_directory: Path,
     media: dict[str, Any],
+    ffmpeg: Path,
 ) -> dict[str, Any]:
     """Validate the render manifest, representative images, and PSNR results."""
     manifest = json.loads(
@@ -406,6 +495,15 @@ def check_render_outputs(
         raise ValueError("Render manifest product label changed.")
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
+    chapter_end_frames = int(manifest.get("chapter_end_frames", 0))
+    chapter_end_seconds = float(manifest.get("chapter_end_seconds", 0.0))
+    expected_chapter_end_frames = int(
+        round(chapter_end_seconds * media["frame_rate_fps"])
+    )
+    if chapter_end_seconds != 1.5 or chapter_end_frames != 36:
+        raise ValueError("The required 1.5-second chapter-end hold changed.")
+    if chapter_end_frames != expected_chapter_end_frames:
+        raise ValueError("Chapter-end seconds and frame count are inconsistent.")
     if manifest["frame_count"] != media["frame_count"]:
         raise ValueError("Manifest and probed frame counts differ.")
     if not np.isclose(
@@ -420,7 +518,9 @@ def check_render_outputs(
         raise ValueError("Render segment map is empty or starts late.")
     expected_start = 0
     previous_scientific_time: dict[int, float] = {}
-    for segment in segments:
+    chapter_end_holds: dict[int, int] = {}
+    chapter_end_segments: dict[int, dict[str, Any]] = {}
+    for segment_index, segment in enumerate(segments):
         if segment["start_frame"] != expected_start:
             raise ValueError("Render segments contain a frame gap or overlap.")
         expected_start += segment["frame_count"]
@@ -431,12 +531,53 @@ def check_render_outputs(
             if time_ip <= previous:
                 raise ValueError(f"Scientific times are not increasing for n={mode}.")
             previous_scientific_time[mode] = time_ip
+        elif segment["kind"] == "chapter_end_hold":
+            mode = int(segment["vertical_mode"])
+            if mode in chapter_end_holds:
+                raise ValueError(f"Multiple chapter-end holds found for n={mode}.")
+            if segment["frame_count"] != chapter_end_frames:
+                raise ValueError(f"Chapter-end hold length changed for n={mode}.")
+            if not np.isclose(float(segment["time_ip"]), 50.0):
+                raise ValueError(f"Chapter-end hold is not at 50 IP for n={mode}.")
+            if segment_index == 0:
+                raise ValueError("A chapter-end hold cannot be the first segment.")
+            previous_segment = segments[segment_index - 1]
+            if (
+                previous_segment["kind"] != "scientific_frame"
+                or int(previous_segment["vertical_mode"]) != mode
+                or not np.isclose(float(previous_segment["time_ip"]), 50.0)
+                or previous_segment["source_key"] != segment["source_key"]
+            ):
+                raise ValueError(
+                    f"Chapter-end hold for n={mode} does not repeat its true "
+                    "50-IP terminal frame."
+                )
+            chapter_end_holds[mode] = int(segment["frame_count"])
+            chapter_end_segments[mode] = segment
     if expected_start != media["frame_count"]:
         raise ValueError("Render segments do not cover every video frame.")
     if previous_scientific_time != {4: 50.0, 16: 50.0, 32: 50.0}:
         raise ValueError("All three movie chapters must end at 50 IP.")
     if manifest.get("vertical_modes") != [4, 16, 32]:
         raise ValueError("Render manifest vertical-mode order changed.")
+    if chapter_end_holds != {4: 36, 16: 36, 32: 36}:
+        raise ValueError("A required chapter-end hold is missing.")
+
+    static_checks = {
+        str(mode): measure_encoded_static_range(
+            ffmpeg,
+            output_directory / "movie2.mp4",
+            start_frame=int(segment["start_frame"]) - int(manifest["hold_frames"]),
+            end_frame=(
+                int(segment["start_frame"])
+                + int(segment["frame_count"])
+                - 1
+            ),
+            width=int(media["resolution"][0]),
+            height=int(media["resolution"][1]),
+        )
+        for mode, segment in chapter_end_segments.items()
+    }
 
     qc = manifest["representative_qc"]
     required_labels = {
@@ -470,6 +611,9 @@ def check_render_outputs(
         "segments_cover_all_frames": True,
         "scientific_time_order": "strictly increasing within each chapter",
         "fixed_color_limits": True,
+        "chapter_end_hold_seconds": chapter_end_seconds,
+        "chapter_end_hold_frames_by_mode": chapter_end_holds,
+        "encoded_chapter_end_static_checks": static_checks,
         "representative_frame_count": len(qc),
         "minimum_representative_psnr_db": minimum_psnr,
         "preview_dimensions": list(preview_dimensions),
@@ -508,7 +652,7 @@ def main() -> None:
     ffprobe = resolve_executable(args.ffprobe, "ffprobe")
     numerical = check_archive(input_path)
     media = check_media(output_directory, ffmpeg, ffprobe)
-    visual = check_render_outputs(output_directory, media)
+    visual = check_render_outputs(output_directory, media, ffmpeg)
     text_outputs = check_text_outputs(output_directory)
     report = {
         "schema_version": 1,

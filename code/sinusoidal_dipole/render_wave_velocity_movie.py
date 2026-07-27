@@ -536,10 +536,16 @@ def build_sequence(
     frame_stride: int,
     hold_frames: int,
     title_frames: int,
+    chapter_end_frames: int,
 ) -> tuple[list[dict[str, Any]], list[Path]]:
     """Build the ordered CFR source list without duplicating frame files."""
-    if frame_stride <= 0 or hold_frames <= 0 or title_frames <= 0:
-        raise ValueError("Frame stride and hold counts must be positive.")
+    if (
+        frame_stride <= 0
+        or hold_frames <= 0
+        or title_frames <= 0
+        or chapter_end_frames <= 0
+    ):
+        raise ValueError("Frame stride and all hold counts must be positive.")
     selected = list(range(0, times.size, frame_stride))
     if selected[-1] != times.size - 1:
         selected.append(times.size - 1)
@@ -575,6 +581,22 @@ def build_sequence(
                     "source_key": field_key,
                 }
             )
+        final_time_index = selected[-1]
+        final_time_value = float(times[final_time_index])
+        final_key = f"n{int(mode)}_t{final_time_index:03d}"
+        start = len(sources)
+        sources.extend([unique_frames[final_key]] * chapter_end_frames)
+        segments.append(
+            {
+                "kind": "chapter_end_hold",
+                "vertical_mode": int(mode),
+                "time_ip": final_time_value,
+                "source_time_index": int(final_time_index),
+                "start_frame": start,
+                "frame_count": chapter_end_frames,
+                "source_key": final_key,
+            }
+        )
 
     return segments, sources
 
@@ -913,6 +935,8 @@ def write_auxiliary_files(
     clipping = clipping_text(metadata)
     sample_interval = metadata["sampling"]["sample_interval_ip"]
     hold_frames = manifest["hold_frames"]
+    chapter_end_frames = manifest["chapter_end_frames"]
+    chapter_end_seconds = manifest["chapter_end_seconds"]
 
     caption = (
         "Movie 2. Evolution of the horizontal wave-velocity field in the "
@@ -929,7 +953,10 @@ def write_auxiliary_files(
         "the complete movie; difference limits are symmetric about zero. The "
         f"movie uses every {sample_interval:g}-IP saved state in strictly "
         f"increasing time order, holds each state for {hold_frames} video "
-        "frames, and does not interpolate physical fields. Clipping is marked "
+        f"frames, and holds each chapter's final state for an additional "
+        f"{chapter_end_frames} frames ({chapter_end_seconds:g} s) before the "
+        "next transition or the end of the movie. It does not interpolate "
+        "physical fields. Clipping is marked "
         f"by extended colourbar ends ({clipping})."
     )
     (output_directory / "movie2_caption.txt").write_text(
@@ -966,7 +993,9 @@ def write_auxiliary_files(
         "curved structures, while the scalar-model difference panels and NRE "
         "curves expose smaller polarisation-related discrepancies. Static "
         "chapter title frames separate the modes; no morphing or field "
-        "interpolation is used."
+        f"interpolation is used. After each case reaches 50 IP, that final "
+        f"frame remains still for an additional {chapter_end_seconds:g} seconds "
+        "before the next chapter or the end of the movie."
     )
     (output_directory / "movie2_accessibility_description.txt").write_text(
         accessibility + "\n",
@@ -1004,6 +1033,8 @@ def write_auxiliary_files(
         "- File smaller than 50 MB: passed\n"
         "- Browser-oriented H.264/yuv420p encoding and decode test: passed\n"
         "- No audio stream or background music: passed\n\n"
+        f"Each chapter ends with an additional {chapter_end_seconds:g}-second "
+        "still hold of its true 50-IP terminal frame.\n\n"
         f"JFM preparing-materials guidance: {JFM_PREPARING_URL}\n"
         f"JFM submitting-materials guidance: {JFM_SUBMITTING_URL}\n"
         f"Cambridge supplementary-material guidance: {CAMBRIDGE_SUPPLEMENT_URL}\n"
@@ -1045,9 +1076,22 @@ def write_auxiliary_files(
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
         "The three chapters show n=4, n=16 and n=32. Their 51 physical states "
         "are true saved integer-period outputs from 0 to 50 IP. Video-frame "
-        "holding controls playback speed; no field interpolation is used."
+        f"holding controls playback speed; each terminal state is held for an "
+        f"additional {chapter_end_seconds:g} seconds, and no field "
+        "interpolation is used."
     )
-    (output_directory / "README.md").write_text(readme + "\n", encoding="utf-8")
+    readme_path = output_directory / "README.md"
+    movie1_marker = "<!-- BEGIN MOVIE 1 -->"
+    if readme_path.is_file():
+        existing_readme = readme_path.read_text(encoding="utf-8")
+        marker_position = existing_readme.find(movie1_marker)
+        if marker_position >= 0:
+            readme = (
+                readme.rstrip()
+                + "\n\n"
+                + existing_readme[marker_position:].lstrip()
+            )
+    readme_path.write_text(readme + "\n", encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1068,6 +1112,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--hold-frames", type=int, default=6)
     parser.add_argument("--title-seconds", type=float, default=1.5)
+    parser.add_argument("--chapter-end-seconds", type=float, default=1.5)
     parser.add_argument("--crf", type=int, default=19)
     parser.add_argument("--dpi", type=int, default=100)
     parser.add_argument(
@@ -1090,6 +1135,9 @@ def main() -> None:
     title_frames = int(round(args.title_seconds * args.fps))
     if title_frames <= 0:
         raise ValueError("The title duration produced no video frames.")
+    chapter_end_frames = int(round(args.chapter_end_seconds * args.fps))
+    if chapter_end_frames <= 0:
+        raise ValueError("The chapter-end duration produced no video frames.")
 
     input_path = args.input.resolve()
     if not input_path.is_file():
@@ -1169,6 +1217,7 @@ def main() -> None:
             frame_stride=args.frame_stride,
             hold_frames=args.hold_frames,
             title_frames=title_frames,
+            chapter_end_frames=chapter_end_frames,
         )
         selected_crf, attempted_commands = encode_video(
             ffmpeg,
@@ -1243,6 +1292,8 @@ def main() -> None:
             "frame_stride": args.frame_stride,
             "hold_frames": args.hold_frames,
             "title_frames": title_frames,
+            "chapter_end_frames": chapter_end_frames,
+            "chapter_end_seconds": args.chapter_end_seconds,
             "vertical_modes": modes.tolist(),
             "selected_crf": selected_crf,
             "encoder": "libx264",

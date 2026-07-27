@@ -11,6 +11,7 @@
     "times_in_inertial_periods": [0.0, 50.0],
     "physical_field_sample_interval_ip": 1.0,
     "physical_field_interpolation": false,
+    "chapter_end_pause_seconds": 1.5,
     "absolute_colormap": "twilight_shifted",
     "difference_colormap": "RdBu_r"
   },
@@ -43,6 +44,7 @@
         "resolution": "${resolution?}",
         "frame_stride": "${frame_stride?}",
         "hold_frames": "${hold_frames?}",
+        "chapter_end_seconds": "${chapter_end_seconds?}",
         "crf": "${crf?}"
       }
     },
