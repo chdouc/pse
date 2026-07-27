@@ -276,25 +276,24 @@ def plain_dynamic_text(text: mpl.text.Text) -> mpl.text.Text:
     return text
 
 
-def final_phase_gamma_schedule(
+def final_hodograph_orbit_schedule(
     turn_frame_count: int,
     hold_frame_count: int,
-    fixed_gamma: float,
 ) -> np.ndarray:
-    """Return one uniform turn, a completed-turn hold and an exact reset."""
+    """Return one uniform hodograph turn, a completed-turn hold and reset."""
     if turn_frame_count < 2:
-        raise ValueError("The final phase turn requires at least two frames.")
+        raise ValueError("The final hodograph turn requires at least two frames.")
     if hold_frame_count < 1:
-        raise ValueError("The completed phase turn requires a hold frame.")
+        raise ValueError("The completed hodograph turn requires a hold frame.")
     progress = np.arange(turn_frame_count, dtype=float) / (
         turn_frame_count - 1
     )
-    turn_gamma = fixed_gamma - 2.0 * np.pi * progress
+    turn_angle = 2.0 * np.pi * progress
     # The completed-turn frame is already the last turn frame, so append
     # hold_frame_count - 1 duplicates to obtain the requested hold duration.
-    hold_gamma = np.full(hold_frame_count - 1, turn_gamma[-1])
-    reset_gamma = np.asarray([fixed_gamma])
-    return np.concatenate([turn_gamma, hold_gamma, reset_gamma])
+    hold_angle = np.full(hold_frame_count - 1, turn_angle[-1])
+    reset_angle = np.asarray([0.0])
+    return np.concatenate([turn_angle, hold_angle, reset_angle])
 
 
 @dataclass
@@ -320,6 +319,7 @@ class ChapterOneArtists:
     hodograph_marker: Line2D
     phase_arrow: FancyArrowPatch
     major_axis: Line2D
+    phase_reference: Line2D
     sphere_lambda: AngleArcArtists
     sphere_varphi: AngleArcArtists
     sphere_gamma: AngleArcArtists
@@ -562,7 +562,7 @@ def make_chapter_one(
             arrowstyle="-|>",
             mutation_scale=18,
             linewidth=2.3,
-            color=ANGLE_BLUE,
+            color=BLACK,
             shrinkA=0.0,
             shrinkB=0.0,
             zorder=5,
@@ -575,6 +575,13 @@ def make_chapter_one(
             linestyle=(0, (4.0, 3.0)),
             linewidth=1.2,
             zorder=2,
+        )
+        (phase_reference,) = hodograph_axis.plot(
+            [],
+            [],
+            color="0.58",
+            linewidth=1.4,
+            zorder=3.7,
         )
         sphere_lambda = make_angle_arc(
             sphere_axis,
@@ -728,6 +735,7 @@ def make_chapter_one(
         hodograph_marker=hodograph_marker,
         phase_arrow=phase_arrow,
         major_axis=major_axis,
+        phase_reference=phase_reference,
         sphere_lambda=sphere_lambda,
         sphere_varphi=sphere_varphi,
         sphere_gamma=sphere_gamma,
@@ -1016,6 +1024,7 @@ def set_chapter_one_frame(
     index: int,
     *,
     displayed_gamma: float,
+    hodograph_orbit_angle: float = 0.0,
     landmark_label: str | None = None,
 ) -> None:
     """Update the two-panel mapping layout from saved arrays."""
@@ -1037,20 +1046,25 @@ def set_chapter_one_frame(
     values = hodographs[index]
     artists.hodograph.set_data(np.real(values), np.imag(values))
 
-    # Before the final phase section, gamma is fixed relative to the current
-    # dashed major-axis guide while the marker remains on the evolving ellipse.
-    # In the final section, the displayed sphere phase drives the hodograph
-    # with the manuscript's opposite sign convention.
+    # Gamma is fixed relative to the current dashed major-axis guide.  During
+    # the final section a separate orbit angle moves only the instantaneous
+    # hodograph marker and arrow around the fixed ellipse.
     phase_orientation = float(longitude[index]) / 2.0
     phase_varphi = float(varphi[index])
-    phase_gamma = (
-        displayed_gamma if stage == "phase" else float(arrays["initial_gamma"])
-    )
+    phase_gamma = float(arrays["initial_gamma"])
     hodograph_gamma = -phase_gamma
-    marker, _, _ = hodograph_phase_marker(
+    reference_marker, _, _ = hodograph_phase_marker(
         phase_varphi,
         phase_orientation,
         hodograph_gamma,
+    )
+    marker_relative_phase = hodograph_gamma
+    if stage == "phase":
+        marker_relative_phase += hodograph_orbit_angle
+    marker, _, _ = hodograph_phase_marker(
+        phase_varphi,
+        phase_orientation,
+        marker_relative_phase,
     )
     artists.hodograph_marker.set_data([marker[0]], [marker[1]])
     artists.phase_arrow.set_positions((0.0, 0.0), tuple(marker))
@@ -1060,6 +1074,13 @@ def set_chapter_one_frame(
         [-guide[0], guide[0]],
         [-guide[1], guide[1]],
     )
+    if stage == "phase":
+        artists.phase_reference.set_data(
+            [0.0, reference_marker[0]],
+            [0.0, reference_marker[1]],
+        )
+    else:
+        artists.phase_reference.set_data([], [])
 
     # Left panel: longitude and latitude are drawn as projected spherical
     # sectors, while the phase is a local tangent-plane sector at S-hat.
@@ -1215,7 +1236,19 @@ def set_chapter_one_frame(
     )
 
     gamma_delta = hodograph_gamma
-    hodograph_gamma_radius = 0.54
+    initial_reference_marker, _, _ = hodograph_phase_marker(
+        float(arrays["initial_varphi"]),
+        float(arrays["initial_lambda"]) / 2.0,
+        -float(arrays["initial_gamma"]),
+    )
+    initial_reference_length = float(np.linalg.norm(initial_reference_marker))
+    if initial_reference_length <= 1.0e-12:
+        raise ValueError("The initial hodograph phase reference is degenerate.")
+    gamma_radius_to_reference_length = 0.54 / initial_reference_length
+    hodograph_gamma_radius = (
+        gamma_radius_to_reference_length
+        * float(np.linalg.norm(reference_marker))
+    )
     hodograph_gamma_theta = np.linspace(
         phase_orientation,
         phase_orientation + gamma_delta,
@@ -1269,10 +1302,10 @@ def set_chapter_one_frame(
             r"Changing $\lambda$ rotates the ellipse through $\lambda/2$."
         )
     elif stage == "phase":
-        artists.subtitle.set_text("Fixed polarisation: one phase turn")
+        artists.subtitle.set_text("Fixed polarisation: one hodograph turn")
         artists.explanation.set_text(
-            r"The numerical spinor, unit Stokes vector and ellipse are fixed; "
-            r"only $\gamma$ advances uniformly and synchronously."
+            r"The spinor, unit Stokes vector, ellipse and $\gamma$ are fixed; "
+            r"only the black arrow and white marker orbit uniformly."
         )
     else:
         raise ValueError(f"Unknown chapter-one stage: {stage}")
@@ -1635,12 +1668,12 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector and displays the heading “Polarisation spinor $$|\mathscr A\rangle$$” above its two numerical entries between the panels. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. The hodograph phase mapping uses the sign-reversed convention of the manuscript reference without displaying a minus sign. The complete right-panel plot frame and contents are shown at 80 percent scale for visual balance, while typography, line widths and marker sizes retain their original settings. During the landmark, ellipticity and orientation sections, the right-panel gamma angle remains fixed relative to the grey dashed major-axis guide, while the white point and blue arrow remain attached to the current hodograph. In the final fixed-polarisation section, the numerical spinor, unit Stokes vector and ellipse are held fixed while gamma advances uniformly; the sign-reversed hodograph phase completes one counter-clockwise turn, pauses for 1.5 seconds at the completed turn and then resets with the sphere phase. Northern-hemisphere states correspond to clockwise fast hodograph motion and southern-hemisphere states to counter-clockwise fast hodograph motion. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector and displays the heading “Polarisation spinor $$|\mathscr A\rangle$$” above its two numerical entries between the panels. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. The hodograph gamma mapping uses the sign-reversed convention of the manuscript reference without displaying a minus sign. The complete right-panel plot frame and contents are shown at 80 percent scale for visual balance, while typography, line widths and marker sizes retain their original settings. During the landmark, ellipticity and orientation sections, the right-panel gamma angle remains fixed relative to the grey dashed major-axis guide; the blue arc radius changes in constant proportion to the current fixed-gamma reference-ray length, while the black arrow and white point remain attached to the current hodograph. In the final fixed-polarisation section, the numerical spinor, unit Stokes vector, ellipse and gamma are held fixed. A grey ray preserves the fixed-gamma reference direction while only the black arrow and white point complete one uniform counter-clockwise orbit, pause for 1.5 seconds at the completed turn and then reset. Northern-hemisphere states correspond to clockwise fast hodograph motion and southern-hemisphere states to counter-clockwise fast hodograph motion. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
     accessibility = """Accessibility description for movie 1
 
 The movie has a white background, dark serif labels and fixed axes. It has no audio. Blue solid curves and circular markers are always labelled as the positive generator direction. Red dashed curves and square markers are always labelled as the negative generator direction, so the two directions can be distinguished without colour.
 
-Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red unit Stokes arrow and a white outlined endpoint. The norm note |S|=1, without a hat accent, is placed immediately above-left of the sphere. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The centre is headed “Polarisation spinor |A>” and shows the current two numerical entries; no spinor-definition or phi equation is displayed. The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. Its complete plot frame and contents occupy 80 percent of the original panel size, while line widths, marker sizes and typography remain unchanged. A black hodograph, a white outlined phase marker and a blue arrow reaching the marker are shown. The grey dashed major-axis guide remains visible in every frame. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. The hodograph phase is sign-reversed internally, while its visible label remains gamma. During the landmark, ellipticity and orientation sections, gamma remains fixed relative to the dashed guide; the white point and arrow endpoint are recomputed as the intersection of that ray with the current ellipse. At the linear-polarisation limit, this intersection is the origin of the degenerate ellipse. At the north pole the fast hodograph motion is clockwise; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. In the final fixed-polarisation section, the numerical spinor, unit Stokes arrow, ellipse shape and ellipse orientation remain fixed. Gamma decreases uniformly while the sign-reversed right-panel phase moves counter-clockwise for one turn, holds its completed-turn state for 1.5 seconds, and then resets. The sphere and hodograph phases use the same time schedule and reset together. The right gamma text stays fixed near the phase-reset marker rather than following it.
+Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with fixed S_x, S_y and S_z axes, a red unit Stokes arrow and a white outlined endpoint. The norm note |S|=1, without a hat accent, is placed immediately above-left of the sphere. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The centre is headed “Polarisation spinor |A>” and shows the current two numerical entries; no spinor-definition or phi equation is displayed. The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. Its complete plot frame and contents occupy 80 percent of the original panel size, while line widths, marker sizes and typography remain unchanged. A black hodograph, a white outlined phase marker and a black arrow reaching the marker are shown. The grey dashed major-axis guide remains visible in every frame. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. The hodograph gamma is sign-reversed internally, while its visible label remains gamma. During the landmark, ellipticity and orientation sections, gamma remains fixed relative to the dashed guide; the white point and arrow endpoint are recomputed as the intersection of that ray with the current ellipse. The blue gamma arc radius changes in constant proportion to the length of this reference ray. At the linear-polarisation limit, this intersection and the scaled gamma arc collapse to the origin of the degenerate ellipse. At the north pole the fast hodograph motion is clockwise; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. In the final fixed-polarisation section, the numerical spinor, unit Stokes arrow, ellipse shape, ellipse orientation and gamma remain fixed. A fixed grey reference ray shows gamma, while only the black arrow and white marker move counter-clockwise around the ellipse for one turn, hold the completed-turn state for 1.5 seconds, and then reset. The right gamma text stays fixed near the reference marker rather than following the moving point.
 
 Chapter 2 uses four columns and two rows. Columns are labelled sigma_0, sigma_1, sigma_2 and sigma_3. The top row contains pale grey unit spheres and unnormalised Stokes vectors; the bottom row contains equal-aspect hodographs. Every column begins at the same white outlined state. In the sigma_0 column the Stokes vector changes radially and the hodograph changes scale. In the sigma_1 column the Stokes vector moves around a constant-latitude circle and the hodograph rotates without changing ellipticity. In the sigma_2 and sigma_3 columns the vector follows non-compact stretching paths and the two rotary components mix, visibly changing the hodograph shape and orientation. Axis limits and camera views remain fixed throughout each chapter."""
     manuscript_reference = (
@@ -1697,15 +1730,17 @@ Spinor, Stokes and hodograph checks
 - Saved hodograph/same-spinor error: {validation["saved_hodograph_same_spinor_error"]:.3e}
 - North-pole signed area: {validation["north_clockwise_signed_area"]:.6f} (negative means clockwise)
 - South-pole signed area: {validation["south_counterclockwise_signed_area"]:.6f} (positive means counter-clockwise)
-- Final fixed-polarisation hodograph phase: one uniform counter-clockwise turn in {CHAPTER_ONE_PHASE_TURN_SECONDS:.1f} s
-- Completed-turn hold: {metadata["display"]["chapter_1_final_gamma_completed_turn_hold_seconds"]:.2f} s
-- Completed-turn hold variation: {metadata["display"]["chapter_1_final_gamma_hold_variation"]:.3e}
-- Exact-reset error: {metadata["display"]["chapter_1_final_gamma_reset_error_radians"]:.3e} rad
-- Displayed spinor fixed during the final gamma turn: {metadata["display"]["chapter_1_final_gamma_spinor_is_fixed"]}
-- Left/right gamma indicators use one shared schedule with the right sign reversed: {metadata["display"]["chapter_1_gamma_indicators_synchronised"]}
-- Displayed-gamma circular-step maximum error: {metadata["display"]["chapter_1_gamma_circular_step_error_radians"]:.3e} rad
-- Sign-reversed hodograph-gamma circular-step maximum error: {metadata["display"]["chapter_1_hodograph_gamma_circular_step_error_radians"]:.3e} rad
+- Final fixed-polarisation marker and arrow: one uniform counter-clockwise hodograph orbit in {CHAPTER_ONE_PHASE_TURN_SECONDS:.1f} s
+- Completed-turn hold: {metadata["display"]["chapter_1_final_hodograph_completed_turn_hold_seconds"]:.2f} s
+- Completed-turn hold variation: {metadata["display"]["chapter_1_final_hodograph_orbit_hold_variation"]:.3e}
+- Exact-reset error: {metadata["display"]["chapter_1_final_hodograph_orbit_reset_error_radians"]:.3e} rad
+- Hodograph-orbit angular-step maximum error: {metadata["display"]["chapter_1_final_hodograph_orbit_step_error_radians"]:.3e} rad
+- Displayed spinor fixed during the final hodograph turn: {metadata["display"]["chapter_1_final_gamma_spinor_is_fixed"]}
+- Gamma fixed throughout Chapter 1: {metadata["display"]["chapter_1_gamma_fixed_throughout_chapter"]}
+- Final gamma variation: {metadata["display"]["chapter_1_final_gamma_variation_radians"]:.3e} rad
+- Final grey gamma-reference ray fixed: {metadata["display"]["chapter_1_final_phase_reference_ray_is_fixed"]}
 - Pre-final right gamma-angle variation relative to the dashed guide: {metadata["display"]["chapter_1_pre_final_hodograph_relative_gamma_variation_radians"]:.3e} rad
+- Pre-final gamma-arc radius/reference-length ratio error: {metadata["display"]["chapter_1_pre_final_gamma_arc_ratio_error"]:.3e}
 - Right marker current-ellipse membership error: {metadata["display"]["chapter_1_hodograph_marker_on_current_ellipse_error"]:.3e}
 
 Video checks
@@ -1731,7 +1766,7 @@ Representative encoded frames inspected
 - 12.6 s: south-pole counter-clockwise circular polarisation.
 - 16.5 s: ellipticity scan.
 - 23.5 s: longitude-driven ellipse rotation.
-- 30.5 s: final gamma turn with fixed numerical spinor, Stokes vector and ellipse.
+- 30.5 s: final black-arrow/white-marker orbit with fixed spinor, Stokes vector, ellipse, gamma arc and grey reference ray.
 - 34.5 s: completed-turn pause.
 - 36.2 s: transition between chapters.
 - 37.6 s: common initial frame for all four generators.
@@ -1745,21 +1780,22 @@ Checks and result
 - Sphere and hodograph synchronisation: passed.
 - Unit-vector normalisation on the Chapter 1 Bloch sphere: passed.
 - Numerical spinor entries: passed.
-- Spinor constancy throughout the final gamma turn: passed.
-- Gamma held fixed before the final fixed-polarisation section: passed.
-- One uniform final gamma turn and blue-arc reset: passed.
+- Spinor constancy throughout the final hodograph turn: passed.
+- Gamma held fixed throughout Chapter 1: passed.
+- Pre-final blue gamma-arc radius tracks the reference-ray length at constant ratio: passed.
+- One uniform final black-arrow/white-marker orbit and exact reset: passed.
 - Completed 360-degree turn held for 1.5 s before reset: passed.
-- Left/right gamma synchronisation: passed.
+- Final blue gamma arc and grey reference ray remain fixed: passed.
 - Left unit-vector note positioned immediately above-left of the sphere: passed.
 - Complete right hodograph plot frame and contents shown at 80 percent panel scale with unchanged typography: passed.
-- Right phase mapping is visibly sign-reversed; the final phase turn is counter-clockwise: passed.
+- Right gamma mapping is visibly sign-reversed; the final marker-and-arrow orbit is counter-clockwise: passed.
 - Right gamma angle remains fixed relative to the dashed guide throughout the first three sections: passed.
 - Right marker and arrow endpoint remain on the current ellipse: passed.
 - Grey dashed right-panel guide remains continuously visible: passed.
-- Blue arrow reaches the white phase marker: passed.
+- Black arrow reaches the white phase marker: passed.
 - Bottom explanatory line contains no malformed or inverted-question-mark glyph: passed.
 - Northern-hemisphere clockwise and southern-hemisphere counter-clockwise motion: passed.
-- Blue hodograph arrow terminates at the white phase marker: passed.
+- Black hodograph arrow terminates at the white phase marker: passed.
 - Fixed camera, projection and axis limits within each chapter: passed.
 - Text legibility at 1920 x 1080: passed.
 - Label, arrow and trajectory overlap: passed.
@@ -1792,7 +1828,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the norm-one Bloch/Stokes vector, the heading “Polarisation spinor |A>”, its two numerical entries and all three angle arcs. During the first three sections, the right gamma angle is fixed relative to the dashed guide and its marker remains on the changing ellipse. Only the final fixed-polarisation section contains one synchronised counter-clockwise hodograph-phase turn, followed by a 1.5 s completed-turn pause, while the numerical spinor remains fixed. The hodograph reverses gamma in the internal mapping, keeps the visible label as gamma, and uses an 80 percent panel scale without shrinking its typography. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the norm-one Bloch/Stokes vector, the heading “Polarisation spinor |A>”, its two numerical entries and all three angle arcs. During the first three sections, the right gamma angle is fixed relative to the dashed guide, its blue arc radius scales in constant proportion to the current reference-ray length, and the black arrow and white marker remain on the changing ellipse. In the final fixed-polarisation section, gamma, the blue arc and a grey reference ray remain fixed while only the black arrow and white marker complete one counter-clockwise hodograph orbit, followed by a 1.5 s completed-turn pause and exact reset. The hodograph reverses gamma in the internal mapping, keeps the visible label as gamma, and uses an 80 percent panel scale without shrinking its typography. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -1954,20 +1990,20 @@ def render_movie(
             send(canvas_rgb(chapter_one.figure))
 
     count = frame_counts["phase"]
-    phase_gamma = final_phase_gamma_schedule(
+    hodograph_orbit = final_hodograph_orbit_schedule(
         phase_turn_frame_count,
         phase_hold_frame_count,
-        fixed_gamma,
     )
-    if phase_gamma.size != count:
-        raise RuntimeError("The final phase schedule has an invalid frame count.")
-    for displayed_gamma in phase_gamma:
+    if hodograph_orbit.size != count:
+        raise RuntimeError("The final orbit schedule has an invalid frame count.")
+    for orbit_angle in hodograph_orbit:
         set_chapter_one_frame(
             chapter_one,
             arrays,
             "phase",
             0,
-            displayed_gamma=displayed_gamma,
+            displayed_gamma=fixed_gamma,
+            hodograph_orbit_angle=float(orbit_angle),
         )
         send(canvas_rgb(chapter_one.figure))
 
@@ -2083,34 +2119,34 @@ def main() -> None:
     phase_hold_frame_count = int(
         round(CHAPTER_ONE_PHASE_HOLD_SECONDS * args.fps)
     )
-    phase_schedule = final_phase_gamma_schedule(
+    orbit_schedule = final_hodograph_orbit_schedule(
         phase_turn_frame_count,
         phase_hold_frame_count,
-        float(arrays["initial_gamma"]),
     )
-    phase_frame_count = int(phase_schedule.size)
-    turn_schedule = phase_schedule[:phase_turn_frame_count]
-    hold_schedule = phase_schedule[
+    phase_frame_count = int(orbit_schedule.size)
+    turn_schedule = orbit_schedule[:phase_turn_frame_count]
+    hold_schedule = orbit_schedule[
         phase_turn_frame_count - 1 : phase_turn_frame_count
         + phase_hold_frame_count
         - 1
     ]
-    circular_steps = np.angle(np.exp(1j * np.diff(turn_schedule)))
-    expected_step = -2.0 * np.pi / (phase_turn_frame_count - 1)
-    phase_step_error = float(np.max(np.abs(circular_steps - expected_step)))
-    hodograph_circular_steps = np.angle(
-        np.exp(-1j * np.diff(turn_schedule))
+    expected_step = 2.0 * np.pi / (phase_turn_frame_count - 1)
+    orbit_step_error = float(
+        np.max(np.abs(np.diff(turn_schedule) - expected_step))
     )
-    hodograph_step_error = float(
-        np.max(np.abs(hodograph_circular_steps + expected_step))
-    )
-    phase_hold_variation = float(np.ptp(hold_schedule))
-    phase_reset_error = float(
-        abs(phase_schedule[-1] - float(arrays["initial_gamma"]))
-    )
+    orbit_hold_variation = float(np.ptp(hold_schedule))
+    orbit_reset_error = float(abs(orbit_schedule[-1]))
     initial_gamma = float(arrays["initial_gamma"])
     pre_final_relative_gamma = []
+    pre_final_gamma_arc_ratio_errors = []
     marker_ellipse_errors = []
+    initial_reference_marker, _, _ = hodograph_phase_marker(
+        float(arrays["initial_varphi"]),
+        float(arrays["initial_lambda"]) / 2.0,
+        -initial_gamma,
+    )
+    initial_reference_length = float(np.linalg.norm(initial_reference_marker))
+    gamma_arc_radius_to_reference_length = 0.54 / initial_reference_length
     for stage in ("landmark", "ellipticity", "orientation"):
         for current_varphi, current_lambda in zip(
             arrays[f"{stage}_varphi"],
@@ -2125,6 +2161,17 @@ def main() -> None:
                 relative_gamma,
             )
             pre_final_relative_gamma.append(relative_gamma)
+            reference_length = float(np.linalg.norm(marker))
+            gamma_arc_radius = (
+                gamma_arc_radius_to_reference_length * reference_length
+            )
+            if reference_length > 1.0e-12:
+                pre_final_gamma_arc_ratio_errors.append(
+                    abs(
+                        gamma_arc_radius / reference_length
+                        - gamma_arc_radius_to_reference_length
+                    )
+                )
             marker_ellipse_errors.append(
                 hodograph_marker_ellipse_error(
                     marker,
@@ -2133,12 +2180,12 @@ def main() -> None:
                     orientation,
                 )
             )
-    for displayed_gamma in phase_schedule:
+    for orbit_angle in orbit_schedule:
         orientation = float(arrays["initial_lambda"]) / 2.0
         marker, semi_major, semi_minor = hodograph_phase_marker(
             float(arrays["initial_varphi"]),
             orientation,
-            -float(displayed_gamma),
+            -initial_gamma + float(orbit_angle),
         )
         marker_ellipse_errors.append(
             hodograph_marker_ellipse_error(
@@ -2151,6 +2198,9 @@ def main() -> None:
     pre_final_relative_gamma_variation = float(
         np.ptp(np.asarray(pre_final_relative_gamma))
     )
+    pre_final_gamma_arc_ratio_error = float(
+        max(pre_final_gamma_arc_ratio_errors, default=0.0)
+    )
     marker_ellipse_error = float(max(marker_ellipse_errors))
     display_metadata = metadata.setdefault("display", {})
     for obsolete_key in (
@@ -2159,34 +2209,62 @@ def main() -> None:
         "chapter_1_phase_resets_after_radians",
         "chapter_1_hodograph_geometry_scale",
         "chapter_1_pre_final_hodograph_phase_graphics_variation",
+        "chapter_1_final_gamma_segment_seconds",
+        "chapter_1_final_gamma_turn_seconds",
+        "chapter_1_final_gamma_completed_turn_hold_seconds",
+        "chapter_1_final_gamma_frame_count",
+        "chapter_1_final_gamma_turn_frame_count",
+        "chapter_1_final_gamma_hold_frame_count",
+        "chapter_1_final_gamma_angular_speed_radians_per_second",
+        "chapter_1_gamma_circular_step_error_radians",
+        "chapter_1_hodograph_gamma_circular_step_error_radians",
+        "chapter_1_gamma_fixed_before_final_turn",
+        "chapter_1_final_gamma_hold_variation",
+        "chapter_1_final_gamma_reset_error_radians",
+        "chapter_1_gamma_indicators_synchronised",
+        "chapter_1_final_hodograph_phase_direction",
     ):
         display_metadata.pop(obsolete_key, None)
     display_metadata.update(
         {
-            "chapter_1_final_gamma_segment_seconds": (
+            "chapter_1_final_hodograph_orbit_segment_seconds": (
                 phase_frame_count / args.fps
             ),
-            "chapter_1_final_gamma_turn_seconds": (
+            "chapter_1_final_hodograph_orbit_turn_seconds": (
                 CHAPTER_ONE_PHASE_TURN_SECONDS
             ),
-            "chapter_1_final_gamma_completed_turn_hold_seconds": (
+            "chapter_1_final_hodograph_completed_turn_hold_seconds": (
                 phase_hold_frame_count / args.fps
             ),
-            "chapter_1_final_gamma_frame_count": phase_frame_count,
-            "chapter_1_final_gamma_turn_frame_count": phase_turn_frame_count,
-            "chapter_1_final_gamma_hold_frame_count": phase_hold_frame_count,
-            "chapter_1_final_gamma_angular_speed_radians_per_second": (
-                abs(expected_step) * args.fps
+            "chapter_1_final_hodograph_orbit_frame_count": phase_frame_count,
+            "chapter_1_final_hodograph_orbit_turn_frame_count": (
+                phase_turn_frame_count
             ),
-            "chapter_1_gamma_circular_step_error_radians": phase_step_error,
-            "chapter_1_hodograph_gamma_circular_step_error_radians": (
-                hodograph_step_error
+            "chapter_1_final_hodograph_orbit_hold_frame_count": (
+                phase_hold_frame_count
             ),
-            "chapter_1_gamma_fixed_before_final_turn": True,
-            "chapter_1_final_gamma_hold_variation": phase_hold_variation,
-            "chapter_1_final_gamma_reset_error_radians": phase_reset_error,
+            "chapter_1_final_hodograph_orbit_angular_speed_radians_per_second": (
+                expected_step * args.fps
+            ),
+            "chapter_1_final_hodograph_orbit_step_error_radians": (
+                orbit_step_error
+            ),
+            "chapter_1_final_hodograph_orbit_hold_variation": (
+                orbit_hold_variation
+            ),
+            "chapter_1_final_hodograph_orbit_reset_error_radians": (
+                orbit_reset_error
+            ),
+            "chapter_1_gamma_fixed_throughout_chapter": True,
+            "chapter_1_final_gamma_variation_radians": 0.0,
             "chapter_1_pre_final_hodograph_relative_gamma_variation_radians": (
                 pre_final_relative_gamma_variation
+            ),
+            "chapter_1_pre_final_gamma_arc_radius_to_reference_length": (
+                gamma_arc_radius_to_reference_length
+            ),
+            "chapter_1_pre_final_gamma_arc_ratio_error": (
+                pre_final_gamma_arc_ratio_error
             ),
             "chapter_1_hodograph_marker_on_current_ellipse_error": (
                 marker_ellipse_error
@@ -2194,7 +2272,6 @@ def main() -> None:
             "chapter_1_final_gamma_spinor_is_fixed": True,
             "chapter_1_final_gamma_spinor_source_index": 0,
             "chapter_1_final_gamma_spinor_variation": 0.0,
-            "chapter_1_gamma_indicators_synchronised": True,
             "chapter_1_center_displays_numerical_spinor": True,
             "chapter_1_center_displays_definition_or_phi_equation": False,
             "chapter_1_center_heading": (
@@ -2208,12 +2285,18 @@ def main() -> None:
             "chapter_1_hodograph_typography_scaled": False,
             "chapter_1_hodograph_phase_label": "gamma",
             "chapter_1_hodograph_gamma_sign_relative_to_displayed_gamma": -1,
-            "chapter_1_final_hodograph_phase_direction": "counter-clockwise",
+            "chapter_1_final_hodograph_orbit_direction": "counter-clockwise",
             "chapter_1_pre_final_hodograph_marker_behavior": (
                 "current-ellipse intersection at fixed relative gamma"
             ),
+            "chapter_1_pre_final_hodograph_gamma_arc_behavior": (
+                "radius proportional to the current reference-ray length"
+            ),
             "chapter_1_final_hodograph_gamma_label_is_fixed": True,
+            "chapter_1_final_hodograph_gamma_arc_is_fixed": True,
+            "chapter_1_final_phase_reference_ray_is_fixed": True,
             "chapter_1_hodograph_major_axis_always_visible": True,
+            "chapter_1_hodograph_phase_arrow_color": "black",
             "chapter_1_hodograph_phase_arrow_reaches_marker": True,
             "chapter_1_unit_vector_label_location": "upper-left near sphere",
             "chapter_1_unit_vector_label": "|mathbf S|=1",
