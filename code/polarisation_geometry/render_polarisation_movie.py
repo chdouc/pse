@@ -21,6 +21,7 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, FancyArrowPatch, Polygon
 import numpy as np
@@ -47,6 +48,8 @@ CHAPTER_ONE_PHASE_TURN_SECONDS = 7.0
 CHAPTER_ONE_PHASE_HOLD_SECONDS = 1.5
 CHAPTER_ONE_HODOGRAPH_PANEL_SCALE = 0.8
 GAMMA_LABEL_DISTANCE_RATIO = 1.24
+CHAPTER_ONE_PHASE_BACKGROUND_ALPHA = 0.18
+GENERATOR_SPHERE_SCALE = 1.4
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -146,6 +149,7 @@ def draw_poincare_sphere(
     limit: float,
     longitude: float,
     label_axes: bool,
+    dashed_hidden_guides: bool = True,
 ) -> None:
     """Draw the fixed unit-sphere reference and projected coordinate axes."""
     axis.set_xlim(-limit, limit)
@@ -189,7 +193,7 @@ def draw_poincare_sphere(
             back[:, 0],
             back[:, 1],
             color="0.67",
-            linestyle=(0, (3.0, 2.5)),
+            linestyle=(0, (3.0, 2.5)) if dashed_hidden_guides else "-",
             linewidth=0.9,
             zorder=1,
         )
@@ -281,24 +285,75 @@ def plain_dynamic_text(text: mpl.text.Text) -> mpl.text.Text:
     return text
 
 
-def final_hodograph_orbit_schedule(
+def final_fast_phase_schedule(
     turn_frame_count: int,
     hold_frame_count: int,
 ) -> np.ndarray:
-    """Return one uniform hodograph turn, a completed-turn hold and reset."""
+    """Return one uniform 2-pi fast-phase turn, completed hold and reset."""
     if turn_frame_count < 2:
-        raise ValueError("The final hodograph turn requires at least two frames.")
+        raise ValueError("The final fast-phase turn requires at least two frames.")
     if hold_frame_count < 1:
-        raise ValueError("The completed hodograph turn requires a hold frame.")
+        raise ValueError("The completed fast-phase turn requires a hold frame.")
     progress = np.arange(turn_frame_count, dtype=float) / (
         turn_frame_count - 1
     )
-    turn_angle = -2.0 * np.pi * progress
+    turn_angle = 2.0 * np.pi * progress
     # The completed-turn frame is already the last turn frame, so append
     # hold_frame_count - 1 duplicates to obtain the requested hold duration.
     hold_angle = np.full(hold_frame_count - 1, turn_angle[-1])
     reset_angle = np.asarray([0.0])
     return np.concatenate([turn_angle, hold_angle, reset_angle])
+
+
+def fast_phase_for_hodograph_point(
+    spinor: np.ndarray,
+    target: np.ndarray,
+) -> float:
+    """Return theta for A_up exp(-i theta)+A_down exp(i theta)=target."""
+    component_up = complex(spinor[0])
+    component_down = complex(np.conj(spinor[1]))
+    target_complex = complex(target[0], target[1])
+    if abs(component_down) <= 1.0e-12:
+        phase_factor = component_up / target_complex
+        phase_factor /= abs(phase_factor)
+        return float(np.angle(phase_factor))
+    roots = np.roots([component_down, -target_complex, component_up])
+    phase_factor = min(roots, key=lambda value: abs(abs(value) - 1.0))
+    phase_factor /= abs(phase_factor)
+    phase = float(np.angle(phase_factor))
+    reconstructed = (
+        component_up * np.exp(-1j * phase)
+        + component_down * np.exp(1j * phase)
+    )
+    if abs(reconstructed - target_complex) > 2.0e-10:
+        raise ValueError("Could not align the rotary-vector decomposition.")
+    return phase
+
+
+def rotary_component_vectors(
+    spinor: np.ndarray,
+    reference_marker: np.ndarray,
+    elapsed_fast_phase: float,
+) -> tuple[complex, complex]:
+    """Return clockwise and counter-clockwise rotary vectors."""
+    phase_offset = fast_phase_for_hodograph_point(spinor, reference_marker)
+    phase = phase_offset + elapsed_fast_phase
+    clockwise = complex(spinor[0]) * np.exp(-1j * phase)
+    counterclockwise = complex(np.conj(spinor[1])) * np.exp(1j * phase)
+    return clockwise, counterclockwise
+
+
+def gradient_segment_colours(color: str, count: int) -> np.ndarray:
+    """Return a pale-to-saturated solid colour sequence."""
+    if count <= 0:
+        return np.empty((0, 4))
+    target = np.asarray(mpl.colors.to_rgba(color))
+    pale = target.copy()
+    pale[:3] = 0.82 * np.ones(3) + 0.18 * target[:3]
+    blend = np.linspace(0.0, 1.0, count)[:, None]
+    colours = pale[None, :] * (1.0 - blend) + target[None, :] * blend
+    colours[:, 3] = np.linspace(0.38, 1.0, count)
+    return colours
 
 
 @dataclass
@@ -323,9 +378,16 @@ class ChapterOneArtists:
     hodograph: Line2D
     hodograph_marker: Line2D
     phase_arrow: FancyArrowPatch
+    hodograph_coordinate_guides: tuple[Line2D, Line2D]
     major_axis: Line2D
     phase_reference: Line2D
     hodograph_direction_triangles: tuple[Polygon, Polygon]
+    clockwise_circle: Line2D
+    counterclockwise_circle: Line2D
+    clockwise_component_arrow: FancyArrowPatch
+    counterclockwise_component_arrow: FancyArrowPatch
+    rotary_sum_guides: Line2D
+    phase_time_text: mpl.text.Text
     sphere_lambda: AngleArcArtists
     sphere_varphi: AngleArcArtists
     sphere_gamma: AngleArcArtists
@@ -512,6 +574,7 @@ def make_chapter_one(
             label_axes=True,
         )
         draw_hodograph_axes(hodograph_axis, limit=1.55, ticks=False)
+        hodograph_coordinate_guides = tuple(hodograph_axis.lines[-2:])
         hodograph_position = hodograph_axis.get_position()
         hodograph_axis.set_position(
             [
@@ -527,10 +590,10 @@ def make_chapter_one(
                 CHAPTER_ONE_HODOGRAPH_PANEL_SCALE * hodograph_position.height,
             ]
         )
-        sphere_axis.set_title("Stokes-Poincare representation", pad=15)
+        sphere_axis.set_title("Stokes-Poincare representation", pad=4)
         figure.text(
             hodograph_position.x0 + 0.5 * hodograph_position.width,
-            0.83,
+            0.815,
             "Horizontal velocity hodograph",
             ha="center",
             va="center",
@@ -592,7 +655,7 @@ def make_chapter_one(
             markeredgecolor=BLACK,
             markeredgewidth=1.4,
             linestyle="None",
-            zorder=6,
+            zorder=12,
         )
         phase_arrow = FancyArrowPatch(
             (0.0, 0.0),
@@ -603,7 +666,7 @@ def make_chapter_one(
             color=BLACK,
             shrinkA=0.0,
             shrinkB=0.0,
-            zorder=5,
+            zorder=11,
         )
         hodograph_axis.add_patch(phase_arrow)
         (major_axis,) = hodograph_axis.plot(
@@ -635,6 +698,63 @@ def make_chapter_one(
         )
         for triangle in direction_triangles:
             hodograph_axis.add_patch(triangle)
+        (clockwise_circle,) = hodograph_axis.plot(
+            [],
+            [],
+            color=BLUE,
+            linewidth=2.0,
+            zorder=7,
+        )
+        (counterclockwise_circle,) = hodograph_axis.plot(
+            [],
+            [],
+            color=RED,
+            linewidth=2.0,
+            zorder=7,
+        )
+        clockwise_component_arrow = FancyArrowPatch(
+            (0.0, 0.0),
+            (0.0, 0.0),
+            arrowstyle="-|>",
+            mutation_scale=16,
+            linewidth=2.1,
+            color=BLUE,
+            shrinkA=0.0,
+            shrinkB=0.0,
+            zorder=8,
+        )
+        counterclockwise_component_arrow = FancyArrowPatch(
+            (0.0, 0.0),
+            (0.0, 0.0),
+            arrowstyle="-|>",
+            mutation_scale=16,
+            linewidth=2.1,
+            color=RED,
+            shrinkA=0.0,
+            shrinkB=0.0,
+            zorder=8,
+        )
+        hodograph_axis.add_patch(clockwise_component_arrow)
+        hodograph_axis.add_patch(counterclockwise_component_arrow)
+        (rotary_sum_guides,) = hodograph_axis.plot(
+            [],
+            [],
+            color="0.28",
+            linewidth=1.5,
+            linestyle=(0, (4.0, 3.0)),
+            zorder=9,
+        )
+        phase_time_text = hodograph_axis.text(
+            0.04,
+            0.95,
+            "",
+            transform=hodograph_axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=16,
+            color=BLACK,
+            zorder=13,
+        )
         sphere_lambda = make_angle_arc(
             sphere_axis,
             edge_color=ANGLE_GREEN,
@@ -751,7 +871,7 @@ def make_chapter_one(
         )
         subtitle = figure.text(
             0.5,
-            0.855,
+            0.875,
             "",
             ha="center",
             va="top",
@@ -786,9 +906,16 @@ def make_chapter_one(
         hodograph=hodograph,
         hodograph_marker=hodograph_marker,
         phase_arrow=phase_arrow,
+        hodograph_coordinate_guides=hodograph_coordinate_guides,
         major_axis=major_axis,
         phase_reference=phase_reference,
         hodograph_direction_triangles=direction_triangles,
+        clockwise_circle=clockwise_circle,
+        counterclockwise_circle=counterclockwise_circle,
+        clockwise_component_arrow=clockwise_component_arrow,
+        counterclockwise_component_arrow=counterclockwise_component_arrow,
+        rotary_sum_guides=rotary_sum_guides,
+        phase_time_text=phase_time_text,
         sphere_lambda=sphere_lambda,
         sphere_varphi=sphere_varphi,
         sphere_gamma=sphere_gamma,
@@ -809,37 +936,41 @@ def make_chapter_one(
 class GeneratorPanelArtists:
     """Mutable artists for one generator column."""
 
-    positive_trail: Line2D
-    negative_trail: Line2D
-    positive_arrow: FancyArrowPatch
-    negative_arrow: FancyArrowPatch
-    positive_marker: Line2D
-    negative_marker: Line2D
+    stokes_trail: Line2D
+    stokes_arrow: FancyArrowPatch
+    stokes_marker: Line2D
     initial_stokes_marker: Line2D
-    positive_hodograph: Line2D
-    negative_hodograph: Line2D
-    initial_hodograph: Line2D
-    positive_phi_trail: Line2D
-    negative_phi_trail: Line2D
+    phi_trail: LineCollection
+    phi_vector: FancyArrowPatch
+    phi_marker: Line2D
     initial_phi_marker: Line2D
 
 
 @dataclass
-class ChapterTwoArtists:
-    """Mutable artists for the Figure 2-style eight-panel chapter."""
+class GeneratorChapterArtists:
+    """Mutable artists for one signed four-generator chapter."""
 
     figure: mpl.figure.Figure
     panels: list[GeneratorPanelArtists]
     parameter_text: mpl.text.Text
+    direction: str
+    color: str
+    chapter_number: int
 
 
-def make_chapter_two(
+def make_generator_chapter(
     width: int,
     height: int,
     *,
     use_tex: bool,
-) -> ChapterTwoArtists:
-    """Create the fixed four-column, two-row generator layout."""
+    direction: str,
+    chapter_number: int,
+) -> GeneratorChapterArtists:
+    """Create one solid-style positive or negative generator layout."""
+    if direction not in {"positive", "negative"}:
+        raise ValueError("Generator direction must be positive or negative.")
+    color = BLUE if direction == "positive" else RED
+    direction_label = "Positive" if direction == "positive" else "Negative"
     dpi = 120
     with mpl.rc_context(publication_style(use_tex=use_tex)):
         figure = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
@@ -849,47 +980,22 @@ def make_chapter_two(
             4,
             left=0.035,
             right=0.985,
-            bottom=0.09,
-            top=0.82,
+            bottom=0.13,
+            top=0.87,
             wspace=0.20,
-            hspace=0.20,
-            height_ratios=[1.03, 1.0],
+            hspace=0.14,
+            height_ratios=[1.08, 1.0],
         )
         figure.text(
             0.5,
             0.955,
-            "Chapter 2: local actions of the four matrix basis directions",
+            (
+                f"Chapter {chapter_number}: {direction_label.lower()} "
+                "actions of the four matrix basis directions"
+            ),
             ha="center",
             va="top",
             fontsize=23,
-        )
-        figure.legend(
-            handles=[
-                Line2D([0], [0], color=BLUE, linewidth=2.8, label="+ direction"),
-                Line2D(
-                    [0],
-                    [0],
-                    color=RED,
-                    linewidth=2.8,
-                    linestyle=(0, (5.0, 3.0)),
-                    label="- direction",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    marker="o",
-                    markerfacecolor="white",
-                    markeredgecolor=BLACK,
-                    linestyle="None",
-                    markersize=8,
-                    label="common initial state",
-                ),
-            ],
-            loc="upper center",
-            bbox_to_anchor=(0.5, 0.905),
-            ncol=3,
-            frameon=False,
-            fontsize=14,
         )
         top_titles = (
             r"$\sigma_0$: amplitude",
@@ -903,71 +1009,45 @@ def make_chapter_two(
             hodograph_axis = figure.add_subplot(grid[1, column])
             draw_poincare_sphere(
                 sphere_axis,
-                limit=2.55,
+                limit=2.55 / GENERATOR_SPHERE_SCALE,
                 longitude=np.pi / 3.0,
                 label_axes=True,
+                dashed_hidden_guides=False,
             )
             draw_hodograph_axes(hodograph_axis, limit=1.7, ticks=True)
             sphere_axis.set_title(top_titles[column], pad=4)
-            hodograph_axis.set_title(rf"hodograph for $\sigma_{column}$", pad=8)
+            hodograph_axis.set_title(
+                rf"$\phi$-vector trajectory for $\sigma_{column}$",
+                pad=8,
+            )
             if column > 0:
                 hodograph_axis.set_ylabel("")
                 hodograph_axis.tick_params(labelleft=False)
 
-            (positive_trail,) = sphere_axis.plot(
+            (stokes_trail,) = sphere_axis.plot(
                 [],
                 [],
-                color=BLUE,
-                linewidth=2.2,
+                color=color,
+                linewidth=2.5,
                 zorder=7,
             )
-            (negative_trail,) = sphere_axis.plot(
-                [],
-                [],
-                color=RED,
-                linestyle=(0, (5.0, 3.0)),
-                linewidth=2.2,
-                zorder=7,
-            )
-            positive_arrow = FancyArrowPatch(
+            stokes_arrow = FancyArrowPatch(
                 (0.0, 0.0),
                 (0.0, 0.0),
                 arrowstyle="-|>",
-                mutation_scale=14,
-                color=BLUE,
-                linewidth=2.3,
+                mutation_scale=16,
+                color=color,
+                linewidth=2.5,
                 zorder=8,
             )
-            negative_arrow = FancyArrowPatch(
-                (0.0, 0.0),
-                (0.0, 0.0),
-                arrowstyle="-|>",
-                mutation_scale=14,
-                color=RED,
-                linewidth=2.3,
-                linestyle=(0, (5.0, 3.0)),
-                zorder=8,
-            )
-            sphere_axis.add_patch(positive_arrow)
-            sphere_axis.add_patch(negative_arrow)
-            (positive_marker,) = sphere_axis.plot(
+            sphere_axis.add_patch(stokes_arrow)
+            (stokes_marker,) = sphere_axis.plot(
                 [],
                 [],
                 marker="o",
-                markersize=5.5,
-                markerfacecolor=BLUE,
-                markeredgecolor=BLUE,
-                linestyle="None",
-                zorder=9,
-            )
-            (negative_marker,) = sphere_axis.plot(
-                [],
-                [],
-                marker="s",
-                markersize=5.2,
-                markerfacecolor="white",
-                markeredgecolor=RED,
-                markeredgewidth=1.4,
+                markersize=6.5,
+                markerfacecolor=color,
+                markeredgecolor=color,
                 linestyle="None",
                 zorder=9,
             )
@@ -983,45 +1063,35 @@ def make_chapter_two(
                 zorder=10,
             )
 
-            (initial_hodograph,) = hodograph_axis.plot(
+            phi_trail = LineCollection(
                 [],
-                [],
-                color="0.67",
-                linewidth=1.4,
-                linestyle=(0, (2.0, 2.0)),
-                zorder=1,
-            )
-            (negative_hodograph,) = hodograph_axis.plot(
-                [],
-                [],
-                color=RED,
-                linewidth=2.1,
-                linestyle=(0, (5.0, 3.0)),
-                zorder=3,
-            )
-            (positive_hodograph,) = hodograph_axis.plot(
-                [],
-                [],
-                color=BLUE,
-                linewidth=2.1,
+                linewidths=2.7,
+                capstyle="round",
                 zorder=4,
             )
-            (negative_phi_trail,) = hodograph_axis.plot(
-                [],
-                [],
-                color=RED,
-                linewidth=1.0,
-                linestyle=(0, (3.0, 2.0)),
-                alpha=0.75,
+            hodograph_axis.add_collection(phi_trail)
+            phi_vector = FancyArrowPatch(
+                (0.0, 0.0),
+                (0.0, 0.0),
+                arrowstyle="-|>",
+                mutation_scale=17,
+                linewidth=2.4,
+                color=color,
+                shrinkA=0.0,
+                shrinkB=0.0,
                 zorder=5,
             )
-            (positive_phi_trail,) = hodograph_axis.plot(
+            hodograph_axis.add_patch(phi_vector)
+            (phi_marker,) = hodograph_axis.plot(
                 [],
                 [],
-                color=BLUE,
-                linewidth=1.0,
-                alpha=0.75,
-                zorder=5,
+                marker="o",
+                markersize=7.0,
+                markerfacecolor=color,
+                markeredgecolor="white",
+                markeredgewidth=0.9,
+                linestyle="None",
+                zorder=6,
             )
             (initial_phi_marker,) = hodograph_axis.plot(
                 [],
@@ -1036,18 +1106,13 @@ def make_chapter_two(
             )
             panels.append(
                 GeneratorPanelArtists(
-                    positive_trail=positive_trail,
-                    negative_trail=negative_trail,
-                    positive_arrow=positive_arrow,
-                    negative_arrow=negative_arrow,
-                    positive_marker=positive_marker,
-                    negative_marker=negative_marker,
+                    stokes_trail=stokes_trail,
+                    stokes_arrow=stokes_arrow,
+                    stokes_marker=stokes_marker,
                     initial_stokes_marker=initial_stokes_marker,
-                    positive_hodograph=positive_hodograph,
-                    negative_hodograph=negative_hodograph,
-                    initial_hodograph=initial_hodograph,
-                    positive_phi_trail=positive_phi_trail,
-                    negative_phi_trail=negative_phi_trail,
+                    phi_trail=phi_trail,
+                    phi_vector=phi_vector,
+                    phi_marker=phi_marker,
                     initial_phi_marker=initial_phi_marker,
                 )
             )
@@ -1063,10 +1128,13 @@ def make_chapter_two(
                 color="0.23",
             )
         )
-    return ChapterTwoArtists(
+    return GeneratorChapterArtists(
         figure=figure,
         panels=panels,
         parameter_text=parameter_text,
+        direction=direction,
+        color=color,
+        chapter_number=chapter_number,
     )
 
 
@@ -1077,7 +1145,7 @@ def set_chapter_one_frame(
     index: int,
     *,
     displayed_gamma: float,
-    hodograph_orbit_angle: float = 0.0,
+    elapsed_fast_phase: float = 0.0,
     landmark_label: str | None = None,
 ) -> None:
     """Update the two-panel mapping layout from saved arrays."""
@@ -1120,8 +1188,8 @@ def set_chapter_one_frame(
             triangle.set_visible(False)
 
     # Gamma is fixed relative to the current dashed major-axis guide.  During
-    # the final section a separate orbit angle moves only the instantaneous
-    # hodograph marker and arrow around the fixed ellipse.
+    # the final section, two counter-rotating circular vectors reconstruct the
+    # instantaneous hodograph marker and black resultant arrow.
     phase_orientation = float(longitude[index]) / 2.0
     phase_varphi = float(varphi[index])
     phase_gamma = float(arrays["initial_gamma"])
@@ -1131,14 +1199,20 @@ def set_chapter_one_frame(
         phase_orientation,
         hodograph_gamma,
     )
-    marker_relative_phase = hodograph_gamma
     if stage == "phase":
-        marker_relative_phase += hodograph_orbit_angle
-    marker, _, _ = hodograph_phase_marker(
-        phase_varphi,
-        phase_orientation,
-        marker_relative_phase,
-    )
+        clockwise, counterclockwise = rotary_component_vectors(
+            spinors[index],
+            reference_marker,
+            elapsed_fast_phase,
+        )
+        marker_complex = clockwise + counterclockwise
+        marker = np.array(
+            [np.real(marker_complex), np.imag(marker_complex)]
+        )
+    else:
+        clockwise = 0.0j
+        counterclockwise = 0.0j
+        marker = reference_marker
     artists.hodograph_marker.set_data([marker[0]], [marker[1]])
     artists.phase_arrow.set_positions((0.0, 0.0), tuple(marker))
     orientation = longitude[index] / 2.0
@@ -1154,6 +1228,90 @@ def set_chapter_one_frame(
         )
     else:
         artists.phase_reference.set_data([], [])
+
+    phase_overlay_visible = stage == "phase"
+    background_alpha = (
+        CHAPTER_ONE_PHASE_BACKGROUND_ALPHA if phase_overlay_visible else 1.0
+    )
+    for background_artist in (
+        artists.hodograph,
+        *artists.hodograph_coordinate_guides,
+        artists.major_axis,
+        artists.phase_reference,
+        *artists.hodograph_direction_triangles,
+        artists.hodograph_lambda_half.arc,
+        artists.hodograph_lambda_half.label,
+        artists.hodograph_varphi_half.arc,
+        artists.hodograph_varphi_half.label,
+        artists.hodograph_gamma.arc,
+        artists.hodograph_gamma.label,
+        artists.ellipticity_chord,
+    ):
+        background_artist.set_alpha(background_alpha)
+    artists.hodograph_lambda_half.fill.set_alpha(
+        background_alpha if phase_overlay_visible else 0.70
+    )
+    artists.hodograph_varphi_half.fill.set_alpha(
+        background_alpha if phase_overlay_visible else 0.70
+    )
+    artists.hodograph_gamma.fill.set_alpha(
+        background_alpha if phase_overlay_visible else 0.18
+    )
+
+    for overlay_artist in (
+        artists.clockwise_circle,
+        artists.counterclockwise_circle,
+        artists.clockwise_component_arrow,
+        artists.counterclockwise_component_arrow,
+        artists.rotary_sum_guides,
+        artists.phase_time_text,
+    ):
+        overlay_artist.set_visible(phase_overlay_visible)
+    if phase_overlay_visible:
+        circle_theta = np.linspace(0.0, 2.0 * np.pi, 361)
+        clockwise_radius = abs(clockwise)
+        counterclockwise_radius = abs(counterclockwise)
+        artists.clockwise_circle.set_data(
+            clockwise_radius * np.cos(circle_theta),
+            clockwise_radius * np.sin(circle_theta),
+        )
+        artists.counterclockwise_circle.set_data(
+            counterclockwise_radius * np.cos(circle_theta),
+            counterclockwise_radius * np.sin(circle_theta),
+        )
+        clockwise_point = np.array(
+            [np.real(clockwise), np.imag(clockwise)]
+        )
+        counterclockwise_point = np.array(
+            [np.real(counterclockwise), np.imag(counterclockwise)]
+        )
+        artists.clockwise_component_arrow.set_positions(
+            (0.0, 0.0),
+            tuple(clockwise_point),
+        )
+        artists.counterclockwise_component_arrow.set_positions(
+            (0.0, 0.0),
+            tuple(counterclockwise_point),
+        )
+        artists.rotary_sum_guides.set_data(
+            [
+                clockwise_point[0],
+                marker[0],
+                np.nan,
+                counterclockwise_point[0],
+                marker[0],
+            ],
+            [
+                clockwise_point[1],
+                marker[1],
+                np.nan,
+                counterclockwise_point[1],
+                marker[1],
+            ],
+        )
+        artists.phase_time_text.set_text(
+            rf"$t={elapsed_fast_phase / np.pi:.2f}\,\pi/f$"
+        )
 
     # Left panel: longitude and latitude are drawn as projected spherical
     # sectors, while the phase is a local tangent-plane sector at S-hat.
@@ -1373,10 +1531,12 @@ def set_chapter_one_frame(
             r"Changing $\lambda$ rotates the ellipse through $\lambda/2$."
         )
     elif stage == "phase":
-        artists.subtitle.set_text("Fixed polarisation: one hodograph turn")
+        artists.subtitle.set_text(
+            "Fixed polarisation: rotary-vector decomposition"
+        )
         artists.explanation.set_text(
-            r"The spinor, unit Stokes vector, ellipse and $\gamma$ are fixed; "
-            r"only the black arrow and white marker orbit uniformly."
+            r"The clockwise and counter-clockwise circular vectors add "
+            r"to the black hodograph vector."
         )
     else:
         raise ValueError(f"Unknown chapter-one stage: {stage}")
@@ -1387,79 +1547,58 @@ def set_chapter_one_frame(
     )
 
 
-def set_chapter_two_frame(
-    artists: ChapterTwoArtists,
+def set_generator_chapter_frame(
+    artists: GeneratorChapterArtists,
     arrays: dict[str, np.ndarray],
     index: int,
 ) -> None:
-    """Update all eight panels from the saved generator trajectories."""
-    positive_stokes = arrays["generator_stokes_positive"]
-    negative_stokes = arrays["generator_stokes_negative"]
-    positive_hodographs = arrays["generator_hodograph_positive"]
-    negative_hodographs = arrays["generator_hodograph_negative"]
+    """Update one signed chapter with solid vectors and gradient trails."""
+    stokes = arrays[f"generator_stokes_{artists.direction}"]
+    hodographs = arrays[f"generator_hodograph_{artists.direction}"]
     for column, panel in enumerate(artists.panels):
-        positive_projected, _ = project_stokes(positive_stokes[column, : index + 1])
-        negative_projected, _ = project_stokes(negative_stokes[column, : index + 1])
-        positive_endpoint = positive_projected[-1]
-        negative_endpoint = negative_projected[-1]
-        initial_endpoint = positive_projected[0]
-        panel.positive_trail.set_data(
-            positive_projected[:, 0],
-            positive_projected[:, 1],
+        projected, _ = project_stokes(stokes[column, : index + 1])
+        endpoint = projected[-1]
+        initial_endpoint = projected[0]
+        panel.stokes_trail.set_data(
+            projected[:, 0],
+            projected[:, 1],
         )
-        panel.negative_trail.set_data(
-            negative_projected[:, 0],
-            negative_projected[:, 1],
-        )
-        panel.positive_arrow.set_positions((0.0, 0.0), tuple(positive_endpoint))
-        panel.negative_arrow.set_positions((0.0, 0.0), tuple(negative_endpoint))
-        panel.positive_marker.set_data(
-            [positive_endpoint[0]],
-            [positive_endpoint[1]],
-        )
-        panel.negative_marker.set_data(
-            [negative_endpoint[0]],
-            [negative_endpoint[1]],
+        panel.stokes_arrow.set_positions((0.0, 0.0), tuple(endpoint))
+        panel.stokes_marker.set_data(
+            [endpoint[0]],
+            [endpoint[1]],
         )
         panel.initial_stokes_marker.set_data(
             [initial_endpoint[0]],
             [initial_endpoint[1]],
         )
 
-        positive_values = positive_hodographs[column, index]
-        negative_values = negative_hodographs[column, index]
-        initial_values = positive_hodographs[column, 0]
-        panel.positive_hodograph.set_data(
-            np.real(positive_values),
-            np.imag(positive_values),
+        phi_track = hodographs[column, : index + 1, 0]
+        phi_points = np.column_stack(
+            [np.real(phi_track), np.imag(phi_track)]
         )
-        panel.negative_hodograph.set_data(
-            np.real(negative_values),
-            np.imag(negative_values),
-        )
-        panel.initial_hodograph.set_data(
-            np.real(initial_values),
-            np.imag(initial_values),
-        )
-        positive_phi_track = positive_hodographs[column, : index + 1, 0]
-        negative_phi_track = negative_hodographs[column, : index + 1, 0]
-        panel.positive_phi_trail.set_data(
-            np.real(positive_phi_track),
-            np.imag(positive_phi_track),
-        )
-        panel.negative_phi_trail.set_data(
-            np.real(negative_phi_track),
-            np.imag(negative_phi_track),
-        )
+        if len(phi_points) >= 2:
+            segments = np.stack([phi_points[:-1], phi_points[1:]], axis=1)
+            panel.phi_trail.set_segments(segments)
+            panel.phi_trail.set_color(
+                gradient_segment_colours(artists.color, len(segments))
+            )
+        else:
+            panel.phi_trail.set_segments([])
+        current_phi = phi_points[-1]
+        panel.phi_vector.set_positions((0.0, 0.0), tuple(current_phi))
+        panel.phi_marker.set_data([current_phi[0]], [current_phi[1]])
+        initial_phi = phi_points[0]
         panel.initial_phi_marker.set_data(
-            [np.real(initial_values[0])],
-            [np.imag(initial_values[0])],
+            [initial_phi[0]],
+            [initial_phi[1]],
         )
 
     parameter = arrays["generator_parameter"][index]
+    sign = "+" if artists.direction == "positive" else "-"
     artists.parameter_text.set_text(
-        f"generator parameter f t = {parameter:.3f}; "
-        "top row uses unnormalised Stokes vectors, and every unit sphere is a scale reference"
+        f"{sign} branch: generator parameter f t = {parameter:.3f}; "
+        "top-row Stokes vectors are unnormalised and each unit sphere is a scale reference"
     )
 
 
@@ -1739,14 +1878,14 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 uses the unit Bloch/Stokes vector and labels its axes $$\mathrm S_x$$, $$\mathrm S_y$$ and $$\mathrm S_z$$. It displays the heading “Polarisation spinor $$|\mathscr A\rangle$$” above its two numerical entries between the panels. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Both gamma labels use the same radial offset ratio and sit close to the midpoint of their blue arcs. The hodograph gamma mapping uses the sign-reversed convention of the manuscript reference without displaying a minus sign. The complete right-panel plot frame and contents are shown at 80 percent scale for visual balance, while typography, line widths and marker sizes retain their original settings. During the landmark, ellipticity and orientation sections, the right-panel gamma angle remains fixed relative to the grey dashed major-axis guide; the blue arc radius changes in constant proportion to the current fixed-gamma reference-ray length, while the black arrow and white point remain attached to the current hodograph. Two tangent-aligned black triangles on the ellipse show the instantaneous clockwise or counter-clockwise handedness and disappear at the linear-polarisation limit. In the final fixed-polarisation section, the numerical spinor, unit Stokes vector, ellipse and gamma are held fixed. A grey ray preserves the fixed-gamma reference direction while only the black arrow and white point complete one uniform clockwise orbit, pause for 1.5 seconds at the completed turn and then reset. Northern-hemisphere states correspond to clockwise fast hodograph motion and southern-hemisphere states to counter-clockwise fast hodograph motion. Chapter 2 shows the exact local actions $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$ for $$\tau\in\{\sigma_0,\sigma_1,\sigma_2,\sigma_3\}$$. Blue solid and red dashed curves denote the positive and negative directions, respectively, and white circles denote the common initial state. The Chapter 2 Stokes vectors are unnormalised; each unit sphere is only a scale reference. The displayed Chapter 2 parameter $$f t$$ is the matrix-generator action parameter, not the time of a background-flow simulation."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 shows the unit Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. In the final fixed-polarisation section, the right-panel construction is faded to a background layer. The two foreground rotary vectors $$\mathscr A_\uparrow\exp(-\mathrm{i}ft)$$ and $$\mathscr A_\downarrow\exp(\mathrm{i}ft)$$ move on clockwise and counter-clockwise circles, respectively. Dashed parallelogram guides show their exact vector sum, whose endpoint is the white marker on the black hodograph vector. The time inside the plot advances from $$t=0$$ to $$t=2\pi/f$$, holds for 1.5 seconds and resets. Chapter 2 displays only the positive exact actions $$|\mathscr A(t)\rangle=\exp(f t\tau/50)|\mathscr A(0)\rangle$$, and Chapter 3 displays only the corresponding negative actions. In both chapters the four top-row unit-sphere references are enlarged by 40 percent and carry solid unnormalised Stokes-vector trajectories. The bottom row omits changing hodograph ellipses and instead shows a solid instantaneous $$\phi$$ vector, a circular endpoint and a pale-to-saturated endpoint trajectory. No dashed branch encoding or square markers are used."""
     accessibility = """Accessibility description for movie 1
 
-The movie has a white background, dark serif labels and fixed axes. It has no audio. Blue solid curves and circular markers are always labelled as the positive generator direction. Red dashed curves and square markers are always labelled as the negative generator direction, so the two directions can be distinguished without colour.
+The silent movie uses a white background, dark serif labels and fixed axes.
 
-Chapter 1 uses a left-centre-right layout. The left panel is a pale grey unit Stokes-Poincare sphere with axes labelled S_x, S_y and S_z in upright roman mathematical type, a red unit Stokes arrow and a white outlined endpoint. The norm note |S|=1, without a hat accent, is placed immediately above-left of the sphere. Green lambda, orange varphi and blue gamma sectors are drawn on the sphere. The left and right gamma labels sit close to their respective blue arcs at one common radial offset ratio. The centre is headed “Polarisation spinor |A>” and shows the current two numerical entries; no spinor-definition or phi equation is displayed. The right panel is an equal-aspect horizontal-velocity plane with u=Re(phi) horizontally and v=Im(phi) vertically. Its complete plot frame and contents occupy 80 percent of the original panel size, while line widths, marker sizes and typography remain unchanged. A black hodograph, a white outlined phase marker and a black arrow reaching the marker are shown. Two black triangular arrowheads on opposite sides of the ellipse follow its sampled tangent direction, showing clockwise motion in the northern hemisphere and counter-clockwise motion in the southern hemisphere; they are hidden at the linear-polarisation limit. The grey dashed major-axis guide remains visible in every frame. Green lambda/2, orange varphi/2 and blue gamma sectors reproduce the angle construction of the manuscript reference. The hodograph gamma is sign-reversed internally, while its visible label remains gamma. During the landmark, ellipticity and orientation sections, gamma remains fixed relative to the dashed guide; the white point and arrow endpoint are recomputed as the intersection of that ray with the current ellipse. The blue gamma arc radius changes in constant proportion to the length of this reference ray. At the linear-polarisation limit, this intersection and the scaled gamma arc collapse to the origin of the degenerate ellipse. At the north pole the fast hodograph motion is clockwise; at positive latitude it is a clockwise ellipse; at the equator it collapses to a line; at negative latitude it is a counter-clockwise ellipse; and at the south pole it is a counter-clockwise circle. In the final fixed-polarisation section, the numerical spinor, unit Stokes arrow, ellipse shape, ellipse orientation and gamma remain fixed. A fixed grey reference ray shows gamma, while only the black arrow and white marker move clockwise around the ellipse for one turn, hold the completed-turn state for 1.5 seconds, and then reset. The right gamma text stays fixed near its blue arc rather than following the moving point.
+Chapter 1 has a pale grey unit Stokes-Poincare sphere on the left, two numerical spinor entries in the centre and a physical hodograph on the right. The sphere axes are labelled S_x, S_y and S_z in upright roman mathematical type. Green, orange and blue sectors identify lambda, varphi and gamma. Two black tangent triangles on the hodograph identify clockwise motion in the northern hemisphere and counter-clockwise motion in the southern hemisphere; they disappear at linear polarisation. During the final section the previous right-panel construction becomes semi-transparent. A large blue circle and arrow rotate clockwise, a smaller red circle and arrow rotate counter-clockwise, and two dark dashed guide segments form a vector-addition parallelogram. Their sum is the opaque black arrow ending at a white circle. A time label inside the upper-left of the plot progresses from zero to two pi divided by f.
 
-Chapter 2 uses four columns and two rows. Columns are labelled sigma_0, sigma_1, sigma_2 and sigma_3. The top row contains pale grey unit spheres and unnormalised Stokes vectors; the bottom row contains equal-aspect hodographs. Every column begins at the same white outlined state. In the sigma_0 column the Stokes vector changes radially and the hodograph changes scale. In the sigma_1 column the Stokes vector moves around a constant-latitude circle and the hodograph rotates without changing ellipticity. In the sigma_2 and sigma_3 columns the vector follows non-compact stretching paths and the two rotary components mix, visibly changing the hodograph shape and orientation. Axis limits and camera views remain fixed throughout each chapter."""
+Chapter 2 contains only positive generator actions in solid blue. Chapter 3 contains only negative generator actions in solid red. Each chapter has four columns labelled sigma_0 through sigma_3. The top row contains enlarged pale grey unit-sphere references with solid Stokes trajectories, circular current markers and white circular initial markers. The bottom row contains no ellipses. Each panel shows a solid vector from the origin to a circular endpoint and a trajectory that changes gradually from pale to saturated colour. No square markers or dashed branch styles appear in Chapters 2 or 3."""
     manuscript_reference = (
         "The Stokes-Poincare representation and the local actions of the four "
         "matrix basis directions are illustrated dynamically in supplementary movie 1."
@@ -1801,11 +1940,16 @@ Spinor, Stokes and hodograph checks
 - Saved hodograph/same-spinor error: {validation["saved_hodograph_same_spinor_error"]:.3e}
 - North-pole signed area: {validation["north_clockwise_signed_area"]:.6f} (negative means clockwise)
 - South-pole signed area: {validation["south_counterclockwise_signed_area"]:.6f} (positive means counter-clockwise)
-- Final fixed-polarisation marker and arrow: one uniform clockwise hodograph orbit in {CHAPTER_ONE_PHASE_TURN_SECONDS:.1f} s
-- Completed-turn hold: {metadata["display"]["chapter_1_final_hodograph_completed_turn_hold_seconds"]:.2f} s
-- Completed-turn hold variation: {metadata["display"]["chapter_1_final_hodograph_orbit_hold_variation"]:.3e}
-- Exact-reset error: {metadata["display"]["chapter_1_final_hodograph_orbit_reset_error_radians"]:.3e} rad
-- Hodograph-orbit angular-step maximum error: {metadata["display"]["chapter_1_final_hodograph_orbit_step_error_radians"]:.3e} rad
+- Final fast-phase interval: one uniform 2-pi turn in {CHAPTER_ONE_PHASE_TURN_SECONDS:.1f} s
+- Completed-turn hold: {metadata["display"]["chapter_1_final_completed_turn_hold_seconds"]:.2f} s
+- Completed-turn hold variation: {metadata["display"]["chapter_1_final_fast_phase_hold_variation"]:.3e}
+- Exact-reset error: {metadata["display"]["chapter_1_final_fast_phase_reset_error_radians"]:.3e} rad
+- Fast-phase angular-step maximum error: {metadata["display"]["chapter_1_final_fast_phase_step_error_radians"]:.3e} rad
+- Rotary-vector sum error: {metadata["display"]["chapter_1_final_rotary_vector_sum_error"]:.3e}
+- Clockwise-component radius variation: {metadata["display"]["chapter_1_final_clockwise_component_radius_variation"]:.3e}
+- Counter-clockwise-component radius variation: {metadata["display"]["chapter_1_final_counterclockwise_component_radius_variation"]:.3e}
+- Resultant clockwise total-angle error: {metadata["display"]["chapter_1_final_resultant_total_angle_error_radians"]:.3e} rad
+- Resultant clockwise-step violation: {metadata["display"]["chapter_1_final_resultant_clockwise_step_violation_radians"]:.3e} rad
 - Displayed spinor fixed during the final hodograph turn: {metadata["display"]["chapter_1_final_gamma_spinor_is_fixed"]}
 - Gamma fixed throughout Chapter 1: {metadata["display"]["chapter_1_gamma_fixed_throughout_chapter"]}
 - Final gamma variation: {metadata["display"]["chapter_1_final_gamma_variation_radians"]:.3e} rad
@@ -1817,6 +1961,11 @@ Spinor, Stokes and hodograph checks
 - Pre-final right gamma-angle variation relative to the dashed guide: {metadata["display"]["chapter_1_pre_final_hodograph_relative_gamma_variation_radians"]:.3e} rad
 - Pre-final gamma-arc radius/reference-length ratio error: {metadata["display"]["chapter_1_pre_final_gamma_arc_ratio_error"]:.3e}
 - Right marker current-ellipse membership error: {metadata["display"]["chapter_1_hodograph_marker_on_current_ellipse_error"]:.3e}
+- Chapter count: {metadata["display"]["chapter_count"]}
+- Chapter 2 / Chapter 3 directions: {metadata["display"]["chapter_2_direction"]} / {metadata["display"]["chapter_3_direction"]}
+- Chapter 2/3 unit-sphere display scale: {metadata["display"]["chapter_2_3_generator_sphere_scale"]:.1f}
+- Chapter 2/3 changing hodograph ellipses shown: {metadata["display"]["chapter_2_3_hodograph_ellipses_shown"]}
+- Chapter 2/3 dashed or square direction encoding used: {metadata["display"]["chapter_2_3_direction_encoding_uses_dashes_or_squares"]}
 
 Video checks
 - Codec/pixel format: {video["codec"]} / {video["pixel_format"]}
@@ -1832,7 +1981,7 @@ Reference comparison
 - Figure 1 was rendered before production. The movie uses the same left-right Stokes-sphere/hodograph logic, white background, serif mathematical typography, pale grey sphere, black hodograph and white outlined state marker.
 - Chapter 1 also reproduces the reference green lambda, orange varphi and blue gamma angle sectors, with half-angle labels on the hodograph.
 - The centre contains only the numerical spinor; the definition and phi equation are intentionally omitted.
-- Figure 2 was rendered before production. Chapter 2 uses the same four generator columns, Stokes panels above hodograph panels, blue positive direction, red negative direction and common white initial state. Dashed red versus solid blue line style and square versus circular markers add colour-independent identification.
+- Figure 2 was rendered before production. Its four generator columns are retained, but the positive and negative branches are separated into Chapters 2 and 3. The top sphere references are enlarged by 40 percent, and the lower panels are converted from changing ellipses to solid phi vectors with gradient endpoint trajectories.
 
 Representative encoded frames inspected
 - 4.3 s: north-pole clockwise circular polarisation.
@@ -1841,13 +1990,17 @@ Representative encoded frames inspected
 - 12.6 s: south-pole counter-clockwise circular polarisation.
 - 16.5 s: ellipticity scan.
 - 23.5 s: longitude-driven ellipse rotation.
-- 30.5 s: final black-arrow/white-marker orbit with fixed spinor, Stokes vector, ellipse, gamma arc and grey reference ray.
+- 30.5 s: rotary-vector decomposition with faded background, two circular components, dashed addition guides and an in-frame time label.
 - 34.5 s: completed-turn pause.
-- 36.2 s: transition between chapters.
-- 37.6 s: common initial frame for all four generators.
-- 44.5 s: intermediate generator actions.
-- 51.3 s: positive and negative generator endpoints.
-- 54.0 s: final held frame.
+- 36.2 s: Chapter 2 positive-action title.
+- 37.6 s: common initial frame for the four positive generator actions.
+- 44.5 s: intermediate positive actions.
+- 51.3 s: positive endpoints.
+- 52.5 s: Chapter 3 negative-action title.
+- 53.6 s: common initial frame for the four negative generator actions.
+- 60.5 s: intermediate negative actions.
+- 67.3 s: negative endpoints.
+- 69.0 s: final held frame.
 
 Checks and result
 - Mathematical labels and spinor convention: passed.
@@ -1858,15 +2011,19 @@ Checks and result
 - Upright roman Stokes-axis labels S_x, S_y and S_z: passed.
 - Two tangent-aligned hodograph direction triangles: passed.
 - Left/right gamma labels use the same close arc-offset ratio: passed.
-- Spinor constancy throughout the final hodograph turn: passed.
+- Spinor constancy throughout the final rotary decomposition: passed.
 - Gamma held fixed throughout Chapter 1: passed.
 - Pre-final blue gamma-arc radius tracks the reference-ray length at constant ratio: passed.
-- One uniform final black-arrow/white-marker orbit and exact reset: passed.
+- Clockwise and counter-clockwise component circles and arrows: passed.
+- Dashed vector-addition guides reproduce the black resultant: passed.
+- In-frame time label runs from t=0 to t=2 pi/f: passed.
+- Final right-panel background alpha and foreground hierarchy: passed.
+- One uniform final fast-phase turn and exact reset: passed.
 - Completed 360-degree turn held for 1.5 s before reset: passed.
 - Final blue gamma arc and grey reference ray remain fixed: passed.
 - Left unit-vector note positioned immediately above-left of the sphere: passed.
 - Complete right hodograph plot frame and contents shown at 80 percent panel scale with unchanged typography: passed.
-- Right gamma mapping is visibly sign-reversed; the final marker-and-arrow orbit is clockwise: passed.
+- Right gamma mapping is visibly sign-reversed; the final rotary resultant is clockwise: passed.
 - Right gamma angle remains fixed relative to the dashed guide throughout the first three sections: passed.
 - Right marker and arrow endpoint remain on the current ellipse: passed.
 - Grey dashed right-panel guide remains continuously visible: passed.
@@ -1874,6 +2031,11 @@ Checks and result
 - Bottom explanatory line contains no malformed or inverted-question-mark glyph: passed.
 - Northern-hemisphere clockwise and southern-hemisphere counter-clockwise motion: passed.
 - Black hodograph arrow terminates at the white phase marker: passed.
+- Chapter 2 contains only positive solid circular-marker trajectories: passed.
+- Chapter 3 contains only negative solid circular-marker trajectories: passed.
+- Chapter 2/3 sphere references enlarged by 40 percent: passed.
+- Chapter 2/3 lower panels contain no changing ellipses: passed.
+- Chapter 2/3 contain no dashed branch styles or square markers: passed.
 - Fixed camera, projection and axis limits within each chapter: passed.
 - Text legibility at 1920 x 1080: passed.
 - Label, arrow and trajectory overlap: passed.
@@ -1906,7 +2068,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping in Figure 1 and the local matrix-basis actions in Figure 2. Chapter 1 shows the norm-one Bloch/Stokes vector with upright roman S_x, S_y and S_z labels, the heading “Polarisation spinor |A>”, its two numerical entries and all three angle arcs. The two gamma labels share one close radial offset ratio to their blue arcs. During the first three sections, the right gamma angle is fixed relative to the dashed guide, its blue arc radius scales in constant proportion to the current reference-ray length, and the black arrow and white marker remain on the changing ellipse. Two tangent-aligned black triangles on the ellipse show its clockwise or counter-clockwise handedness. In the final fixed-polarisation section, gamma, the blue arc and a grey reference ray remain fixed while only the black arrow and white marker complete one clockwise hodograph orbit, followed by a 1.5 s completed-turn pause and exact reset. The hodograph reverses gamma in the internal mapping, keeps the visible label as gamma, and uses an 80 percent panel scale without shrinking its typography. It is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping and the local matrix-basis actions. Chapter 1 shows the norm-one Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Its final section fades the original right-panel geometry and overlays clockwise and counter-clockwise circular component vectors, dashed vector-addition guides, the black resultant and an in-frame time from `0` to `2 pi/f`. Chapter 2 shows only positive matrix-basis actions in solid blue; Chapter 3 shows only negative actions in solid red. Their top-row sphere references are enlarged by 40 percent. Their bottom rows contain solid phi vectors, circular endpoints and pale-to-saturated trajectories rather than changing ellipses. No dashed branch encoding or square markers are used. The movie is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -1921,7 +2083,7 @@ Files:
 - `movie1_data.npz`: spinor, Stokes and hodograph arrays used by the renderer.
 - `movie1_metadata.json`: definitions, initial state, display limits and validation metrics.
 
-The manuscript spinor convention is `{metadata["spinor_convention"]}`. The common Figure 2 initial state is:
+The manuscript spinor convention is `{metadata["spinor_convention"]}`. The common Chapter 2/3 initial state is:
 
 - `A_up = {format_complex(initial["A_up"])}`;
 - `A_down = {format_complex(initial["A_down"])}`;
@@ -1932,7 +2094,7 @@ The manuscript spinor convention is `{metadata["spinor_convention"]}`. The commo
 - `lambda = {initial["lambda_radians"]:.12g} rad ({initial["lambda_degrees"]:.6f} deg)`;
 - `gamma = {initial["gamma_radians"]:.12g} rad ({initial["gamma_degrees"]:.6f} deg)`.
 
-The displayed Chapter 2 parameter is the matrix-generator action parameter `f t`, not a background-flow simulation time. The unit spheres in Chapter 2 are scale references; the Stokes vectors are not normalised.
+The displayed Chapter 2/3 parameter is the matrix-generator action parameter `f t`, not a background-flow simulation time. The enlarged unit spheres are scale references; the Stokes vectors are not normalised.
 
 Recreate the deliverables from the repository root with an output directory supplied at run time:
 
@@ -1958,16 +2120,30 @@ def render_movie(
 ) -> tuple[dict[str, Any] | None, int]:
     """Render the complete timeline or only the representative preview."""
     chapter_one = make_chapter_one(width, height, use_tex=use_tex)
-    chapter_two = make_chapter_two(width, height, use_tex=use_tex)
+    chapter_two = make_generator_chapter(
+        width,
+        height,
+        use_tex=use_tex,
+        direction="positive",
+        chapter_number=2,
+    )
+    chapter_three = make_generator_chapter(
+        width,
+        height,
+        use_tex=use_tex,
+        direction="negative",
+        chapter_number=3,
+    )
     sample_count = arrays["unit_progress"].size
 
     preview_index = int(round(0.55 * (sample_count - 1)))
-    set_chapter_two_frame(chapter_two, arrays, preview_index)
+    set_generator_chapter_frame(chapter_two, arrays, preview_index)
     preview_frame = canvas_rgb(chapter_two.figure)
     Image.fromarray(preview_frame).save(output_directory / PREVIEW_FILENAME)
     if preview_only:
         plt.close(chapter_one.figure)
         plt.close(chapter_two.figure)
+        plt.close(chapter_three.figure)
         return None, 0
 
     segments = (
@@ -1981,7 +2157,9 @@ def render_movie(
             CHAPTER_ONE_PHASE_TURN_SECONDS + CHAPTER_ONE_PHASE_HOLD_SECONDS,
         ),
         ("chapter2_title", 2.0),
-        ("generator", 14.0),
+        ("generator_positive", 14.0),
+        ("chapter3_title", 2.0),
+        ("generator_negative", 14.0),
         ("final_hold", 3.0),
     )
     frame_counts = {name: int(round(duration * fps)) for name, duration in segments}
@@ -2009,7 +2187,14 @@ def render_movie(
         width,
         height,
         "Chapter 2",
-        "Exact positive and negative actions of the four matrix basis directions",
+        "Positive actions of the four matrix basis directions",
+        use_tex=use_tex,
+    )
+    chapter3_title = title_frame(
+        width,
+        height,
+        "Chapter 3",
+        "Negative actions of the four matrix basis directions",
         use_tex=use_tex,
     )
     output_path = output_directory / MOVIE_FILENAME
@@ -2068,37 +2253,50 @@ def render_movie(
             send(canvas_rgb(chapter_one.figure))
 
     count = frame_counts["phase"]
-    hodograph_orbit = final_hodograph_orbit_schedule(
+    elapsed_fast_phase = final_fast_phase_schedule(
         phase_turn_frame_count,
         phase_hold_frame_count,
     )
-    if hodograph_orbit.size != count:
-        raise RuntimeError("The final orbit schedule has an invalid frame count.")
-    for orbit_angle in hodograph_orbit:
+    if elapsed_fast_phase.size != count:
+        raise RuntimeError(
+            "The final fast-phase schedule has an invalid frame count."
+        )
+    for fast_phase in elapsed_fast_phase:
         set_chapter_one_frame(
             chapter_one,
             arrays,
             "phase",
             0,
             displayed_gamma=fixed_gamma,
-            hodograph_orbit_angle=float(orbit_angle),
+            elapsed_fast_phase=float(fast_phase),
         )
         send(canvas_rgb(chapter_one.figure))
 
     for _ in range(frame_counts["chapter2_title"]):
         send(chapter2_title)
 
-    count = frame_counts["generator"]
+    count = frame_counts["generator_positive"]
+    for frame_index in range(count):
+        progress = frame_index / max(count - 1, 1)
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        data_index = int(round(smooth * (sample_count - 1)))
+        set_generator_chapter_frame(chapter_two, arrays, data_index)
+        send(canvas_rgb(chapter_two.figure))
+
+    for _ in range(frame_counts["chapter3_title"]):
+        send(chapter3_title)
+
+    count = frame_counts["generator_negative"]
     final_generator_frame: np.ndarray | None = None
     for frame_index in range(count):
         progress = frame_index / max(count - 1, 1)
         smooth = progress * progress * (3.0 - 2.0 * progress)
         data_index = int(round(smooth * (sample_count - 1)))
-        set_chapter_two_frame(chapter_two, arrays, data_index)
-        final_generator_frame = canvas_rgb(chapter_two.figure)
+        set_generator_chapter_frame(chapter_three, arrays, data_index)
+        final_generator_frame = canvas_rgb(chapter_three.figure)
         send(final_generator_frame)
     if final_generator_frame is None:
-        raise RuntimeError("No Chapter 2 frames were rendered.")
+        raise RuntimeError("No Chapter 3 frames were rendered.")
     for _ in range(frame_counts["final_hold"]):
         send(final_generator_frame)
 
@@ -2106,6 +2304,7 @@ def render_movie(
     return_code = encoder.wait()
     plt.close(chapter_one.figure)
     plt.close(chapter_two.figure)
+    plt.close(chapter_three.figure)
     if return_code != 0:
         raise RuntimeError(f"ffmpeg failed with exit code {return_code}.")
     if written != total_frames:
@@ -2197,23 +2396,23 @@ def main() -> None:
     phase_hold_frame_count = int(
         round(CHAPTER_ONE_PHASE_HOLD_SECONDS * args.fps)
     )
-    orbit_schedule = final_hodograph_orbit_schedule(
+    fast_phase_schedule = final_fast_phase_schedule(
         phase_turn_frame_count,
         phase_hold_frame_count,
     )
-    phase_frame_count = int(orbit_schedule.size)
-    turn_schedule = orbit_schedule[:phase_turn_frame_count]
-    hold_schedule = orbit_schedule[
+    phase_frame_count = int(fast_phase_schedule.size)
+    turn_schedule = fast_phase_schedule[:phase_turn_frame_count]
+    hold_schedule = fast_phase_schedule[
         phase_turn_frame_count - 1 : phase_turn_frame_count
         + phase_hold_frame_count
         - 1
     ]
-    expected_step = -2.0 * np.pi / (phase_turn_frame_count - 1)
-    orbit_step_error = float(
+    expected_step = 2.0 * np.pi / (phase_turn_frame_count - 1)
+    fast_phase_step_error = float(
         np.max(np.abs(np.diff(turn_schedule) - expected_step))
     )
-    orbit_hold_variation = float(np.ptp(hold_schedule))
-    orbit_reset_error = float(abs(orbit_schedule[-1]))
+    fast_phase_hold_variation = float(np.ptp(hold_schedule))
+    fast_phase_reset_error = float(abs(fast_phase_schedule[-1]))
     initial_gamma = float(arrays["initial_gamma"])
     pre_final_relative_gamma = []
     pre_final_gamma_arc_ratio_errors = []
@@ -2301,13 +2500,53 @@ def main() -> None:
                     )
                     if signed_direction * float(current_varphi) >= 0.0:
                         direction_triangle_handedness_mismatches += 1
-    for orbit_angle in orbit_schedule:
-        orientation = float(arrays["initial_lambda"]) / 2.0
-        marker, semi_major, semi_minor = hodograph_phase_marker(
-            float(arrays["initial_varphi"]),
-            orientation,
-            -initial_gamma + float(orbit_angle),
+    phase_spinor = arrays["phase_spinor"][0]
+    orientation = float(arrays["initial_lambda"]) / 2.0
+    _, semi_major, semi_minor = hodograph_phase_marker(
+        float(arrays["initial_varphi"]),
+        orientation,
+        0.0,
+    )
+    resultant_markers = []
+    clockwise_radii = []
+    counterclockwise_radii = []
+    rotary_sum_errors = []
+    for elapsed_fast_phase in fast_phase_schedule:
+        clockwise, counterclockwise = rotary_component_vectors(
+            phase_spinor,
+            initial_reference_marker,
+            float(elapsed_fast_phase),
         )
+        resultant = clockwise + counterclockwise
+        marker = np.array([np.real(resultant), np.imag(resultant)])
+        direct = (
+            complex(phase_spinor[0])
+            * np.exp(
+                -1j
+                * (
+                    fast_phase_for_hodograph_point(
+                        phase_spinor,
+                        initial_reference_marker,
+                    )
+                    + float(elapsed_fast_phase)
+                )
+            )
+            + complex(np.conj(phase_spinor[1]))
+            * np.exp(
+                1j
+                * (
+                    fast_phase_for_hodograph_point(
+                        phase_spinor,
+                        initial_reference_marker,
+                    )
+                    + float(elapsed_fast_phase)
+                )
+            )
+        )
+        rotary_sum_errors.append(abs(resultant - direct))
+        resultant_markers.append(marker)
+        clockwise_radii.append(abs(clockwise))
+        counterclockwise_radii.append(abs(counterclockwise))
         marker_ellipse_errors.append(
             hodograph_marker_ellipse_error(
                 marker,
@@ -2316,6 +2555,21 @@ def main() -> None:
                 orientation,
             )
         )
+    turn_markers = np.asarray(resultant_markers[:phase_turn_frame_count])
+    resultant_angles = np.unwrap(
+        np.arctan2(turn_markers[:, 1], turn_markers[:, 0])
+    )
+    resultant_total_angle_error = float(
+        abs(resultant_angles[-1] - resultant_angles[0] + 2.0 * np.pi)
+    )
+    resultant_clockwise_step_violation = float(
+        max(np.max(np.diff(resultant_angles)), 0.0)
+    )
+    clockwise_radius_variation = float(np.ptp(clockwise_radii))
+    counterclockwise_radius_variation = float(
+        np.ptp(counterclockwise_radii)
+    )
+    rotary_sum_error = float(max(rotary_sum_errors))
     pre_final_relative_gamma_variation = float(
         np.ptp(np.asarray(pre_final_relative_gamma))
     )
@@ -2347,37 +2601,76 @@ def main() -> None:
         "chapter_1_final_gamma_reset_error_radians",
         "chapter_1_gamma_indicators_synchronised",
         "chapter_1_final_hodograph_phase_direction",
+        "chapter_1_final_hodograph_orbit_segment_seconds",
+        "chapter_1_final_hodograph_orbit_turn_seconds",
+        "chapter_1_final_hodograph_completed_turn_hold_seconds",
+        "chapter_1_final_hodograph_orbit_frame_count",
+        "chapter_1_final_hodograph_orbit_turn_frame_count",
+        "chapter_1_final_hodograph_orbit_hold_frame_count",
+        "chapter_1_final_hodograph_orbit_angular_speed_radians_per_second",
+        "chapter_1_final_hodograph_orbit_step_error_radians",
+        "chapter_1_final_hodograph_orbit_hold_variation",
+        "chapter_1_final_hodograph_orbit_reset_error_radians",
+        "chapter_1_final_hodograph_orbit_direction",
     ):
         display_metadata.pop(obsolete_key, None)
     display_metadata.update(
         {
-            "chapter_1_final_hodograph_orbit_segment_seconds": (
+            "chapter_1_final_rotary_decomposition_segment_seconds": (
                 phase_frame_count / args.fps
             ),
-            "chapter_1_final_hodograph_orbit_turn_seconds": (
+            "chapter_1_final_fast_phase_turn_seconds": (
                 CHAPTER_ONE_PHASE_TURN_SECONDS
             ),
-            "chapter_1_final_hodograph_completed_turn_hold_seconds": (
+            "chapter_1_final_completed_turn_hold_seconds": (
                 phase_hold_frame_count / args.fps
             ),
-            "chapter_1_final_hodograph_orbit_frame_count": phase_frame_count,
-            "chapter_1_final_hodograph_orbit_turn_frame_count": (
+            "chapter_1_final_rotary_decomposition_frame_count": (
+                phase_frame_count
+            ),
+            "chapter_1_final_fast_phase_turn_frame_count": (
                 phase_turn_frame_count
             ),
-            "chapter_1_final_hodograph_orbit_hold_frame_count": (
+            "chapter_1_final_completed_turn_hold_frame_count": (
                 phase_hold_frame_count
             ),
-            "chapter_1_final_hodograph_orbit_angular_speed_radians_per_second": (
+            "chapter_1_final_fast_phase_angular_speed_radians_per_second": (
                 expected_step * args.fps
             ),
-            "chapter_1_final_hodograph_orbit_step_error_radians": (
-                orbit_step_error
+            "chapter_1_final_fast_phase_step_error_radians": (
+                fast_phase_step_error
             ),
-            "chapter_1_final_hodograph_orbit_hold_variation": (
-                orbit_hold_variation
+            "chapter_1_final_fast_phase_hold_variation": (
+                fast_phase_hold_variation
             ),
-            "chapter_1_final_hodograph_orbit_reset_error_radians": (
-                orbit_reset_error
+            "chapter_1_final_fast_phase_reset_error_radians": (
+                fast_phase_reset_error
+            ),
+            "chapter_1_final_resultant_direction": "clockwise",
+            "chapter_1_final_resultant_total_angle_error_radians": (
+                resultant_total_angle_error
+            ),
+            "chapter_1_final_resultant_clockwise_step_violation_radians": (
+                resultant_clockwise_step_violation
+            ),
+            "chapter_1_final_rotary_vector_sum_error": rotary_sum_error,
+            "chapter_1_final_clockwise_component_radius_variation": (
+                clockwise_radius_variation
+            ),
+            "chapter_1_final_counterclockwise_component_radius_variation": (
+                counterclockwise_radius_variation
+            ),
+            "chapter_1_final_clockwise_component": (
+                "A_up exp(-i f t)"
+            ),
+            "chapter_1_final_counterclockwise_component": (
+                "A_down exp(+i f t)"
+            ),
+            "chapter_1_final_vector_addition_guides": "dashed",
+            "chapter_1_final_time_label": "t = (f t) / f",
+            "chapter_1_final_time_label_inside_hodograph_frame": True,
+            "chapter_1_final_hodograph_background_alpha": (
+                CHAPTER_ONE_PHASE_BACKGROUND_ALPHA
             ),
             "chapter_1_gamma_fixed_throughout_chapter": True,
             "chapter_1_final_gamma_variation_radians": 0.0,
@@ -2428,7 +2721,6 @@ def main() -> None:
             "chapter_1_hodograph_typography_scaled": False,
             "chapter_1_hodograph_phase_label": "gamma",
             "chapter_1_hodograph_gamma_sign_relative_to_displayed_gamma": -1,
-            "chapter_1_final_hodograph_orbit_direction": "clockwise",
             "chapter_1_pre_final_hodograph_marker_behavior": (
                 "current-ellipse intersection at fixed relative gamma"
             ),
@@ -2444,6 +2736,16 @@ def main() -> None:
             "chapter_1_unit_vector_label_location": "upper-left near sphere",
             "chapter_1_unit_vector_label": "|mathbf S|=1",
             "chapter_1_bottom_line_malformed_glyphs_present": False,
+            "chapter_count": 3,
+            "chapter_2_direction": "positive",
+            "chapter_3_direction": "negative",
+            "chapter_2_3_generator_sphere_scale": GENERATOR_SPHERE_SCALE,
+            "chapter_2_3_bottom_row_content": (
+                "solid phi vector with pale-to-saturated endpoint trajectory"
+            ),
+            "chapter_2_3_hodograph_ellipses_shown": False,
+            "chapter_2_3_direction_encoding_uses_dashes_or_squares": False,
+            "chapter_2_3_current_and_initial_markers_are_circles": True,
         }
     )
     metadata_path.write_text(
