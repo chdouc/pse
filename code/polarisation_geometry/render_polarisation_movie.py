@@ -61,6 +61,9 @@ CHAPTER_ONE_PHASE_BACKGROUND_ALPHA = 0.18
 GENERATOR_SPHERE_SCALE = 1.4
 GENERATOR_FAST_PHASE_TURNS = 4.0
 GENERATOR_INITIAL_RAY_ANGLE = np.deg2rad(54.75)
+TRIANGULAR_ARROW_STYLE = "-|>"
+TRIANGULAR_ARROW_JOIN_STYLE = "miter"
+TRIANGULAR_ARROW_CAP_STYLE = "butt"
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -239,10 +242,12 @@ def draw_poincare_sphere(
             FancyArrowPatch(
                 tuple(0.84 * endpoints[1]),
                 tuple(endpoints[1]),
-                arrowstyle="-|>",
+                arrowstyle=TRIANGULAR_ARROW_STYLE,
                 mutation_scale=11,
                 linewidth=1.1,
                 color="0.23",
+                joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+                capstyle=TRIANGULAR_ARROW_CAP_STYLE,
                 zorder=5,
             )
         )
@@ -686,10 +691,12 @@ def make_chapter_one(
         stokes_arrow = FancyArrowPatch(
             (0.0, 0.0),
             (0.0, 0.0),
-            arrowstyle="-|>",
+            arrowstyle=TRIANGULAR_ARROW_STYLE,
             mutation_scale=20,
             linewidth=3.0,
             color=RED,
+            joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+            capstyle=TRIANGULAR_ARROW_CAP_STYLE,
             zorder=8,
         )
         sphere_axis.add_patch(stokes_arrow)
@@ -725,10 +732,12 @@ def make_chapter_one(
         phase_arrow = FancyArrowPatch(
             (0.0, 0.0),
             (0.0, 0.0),
-            arrowstyle="-|>",
+            arrowstyle=TRIANGULAR_ARROW_STYLE,
             mutation_scale=18,
             linewidth=2.3,
             color=BLACK,
+            joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+            capstyle=TRIANGULAR_ARROW_CAP_STYLE,
             shrinkA=0.0,
             shrinkB=0.0,
             zorder=11,
@@ -754,8 +763,8 @@ def make_chapter_one(
                 np.zeros((3, 2)),
                 closed=True,
                 facecolor=BLACK,
-                edgecolor="white",
-                linewidth=0.7,
+                edgecolor="none",
+                linewidth=0.0,
                 visible=False,
                 zorder=4.8,
             )
@@ -780,10 +789,12 @@ def make_chapter_one(
         clockwise_component_arrow = FancyArrowPatch(
             (0.0, 0.0),
             (0.0, 0.0),
-            arrowstyle="-|>",
+            arrowstyle=TRIANGULAR_ARROW_STYLE,
             mutation_scale=16,
             linewidth=2.1,
             color=BLUE,
+            joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+            capstyle=TRIANGULAR_ARROW_CAP_STYLE,
             shrinkA=0.0,
             shrinkB=0.0,
             zorder=8,
@@ -791,10 +802,12 @@ def make_chapter_one(
         counterclockwise_component_arrow = FancyArrowPatch(
             (0.0, 0.0),
             (0.0, 0.0),
-            arrowstyle="-|>",
+            arrowstyle=TRIANGULAR_ARROW_STYLE,
             mutation_scale=16,
             linewidth=2.1,
             color=RED,
+            joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+            capstyle=TRIANGULAR_ARROW_CAP_STYLE,
             shrinkA=0.0,
             shrinkB=0.0,
             zorder=8,
@@ -1094,11 +1107,24 @@ def make_generator_chapter(
             draw_hodograph_axes(hodograph_axis, limit=2.05, ticks=True)
             figure.text(
                 sphere_title_x,
-                0.885,
+                0.905,
                 top_titles[column],
                 ha="center",
                 va="center",
                 fontsize=mpl.rcParams["axes.titlesize"],
+            )
+            branch_sign = "+" if direction == "positive" else "-"
+            figure.text(
+                sphere_title_x - (0.012 if column == 0 else 0.0),
+                0.855,
+                (
+                    rf"$\partial_t|\mathscr{{A}}\rangle"
+                    rf"={branch_sign}\frac{{f}}{{50}}\sigma_{column}"
+                    rf"|\mathscr{{A}}\rangle$"
+                ),
+                ha="center",
+                va="center",
+                fontsize=15,
             )
             hodograph_axis.set_title(
                 rf"$\phi$ track for $\sigma_{column}$",
@@ -1119,10 +1145,12 @@ def make_generator_chapter(
             stokes_arrow = FancyArrowPatch(
                 (0.0, 0.0),
                 (0.0, 0.0),
-                arrowstyle="-|>",
+                arrowstyle=TRIANGULAR_ARROW_STYLE,
                 mutation_scale=16,
                 color=color,
                 linewidth=2.5,
+                joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+                capstyle=TRIANGULAR_ARROW_CAP_STYLE,
                 clip_on=False,
                 zorder=8,
             )
@@ -1161,10 +1189,12 @@ def make_generator_chapter(
             phi_vector = FancyArrowPatch(
                 (0.0, 0.0),
                 (0.0, 0.0),
-                arrowstyle="-|>",
+                arrowstyle=TRIANGULAR_ARROW_STYLE,
                 mutation_scale=17,
                 linewidth=2.4,
                 color=color,
+                joinstyle=TRIANGULAR_ARROW_JOIN_STYLE,
+                capstyle=TRIANGULAR_ARROW_CAP_STYLE,
                 shrinkA=0.0,
                 shrinkB=0.0,
                 zorder=5,
@@ -1984,14 +2014,14 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 shows the unit Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. In the final fixed-polarisation section, the right-panel construction is faded to a background layer. The two foreground rotary vectors $$\mathscr A_\uparrow\exp(-\mathrm{i}ft)$$ and $$\mathscr A_\downarrow\exp(\mathrm{i}ft)$$ move on clockwise and counter-clockwise circles, respectively. Dashed parallelogram guides show their exact vector sum, whose endpoint is the white marker on the black hodograph vector. The time inside the plot advances from $$t=0$$ to $$t=2\pi/f$$, holds for 5 seconds and resets. Chapter 2 displays the positive track and Chapter 3 the negative track generated by $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$. In both chapters the fast carrier uses the same forward phase $$ft\in[0,8\pi]$$ and therefore runs clockwise for four turns. The slow spinor actions use $$+ft/50$$ in Chapter 2 and $$-ft/50$$ in Chapter 3. The completed positive and negative tracks are each held for 5 seconds. The four top-row unit-sphere references are enlarged by 40 percent and carry the slow solid unnormalised Stokes-vector trajectories. The bottom row omits changing hodograph ellipses and instead shows the fast instantaneous $$\phi$$ vector, a circular endpoint and its pale-to-saturated trajectory. Panel titles reproduce the terminology of manuscript figure 2. No dashed branch encoding or square markers are used."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 shows the unit Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. In the final fixed-polarisation section, the right-panel construction is faded to a background layer. The two foreground rotary vectors $$\mathscr A_\uparrow\exp(-\mathrm{i}ft)$$ and $$\mathscr A_\downarrow\exp(\mathrm{i}ft)$$ move on clockwise and counter-clockwise circles, respectively. Dashed parallelogram guides show their exact vector sum, whose endpoint is the white marker on the black hodograph vector. The time inside the plot advances from $$t=0$$ to $$t=2\pi/f$$, holds for 5 seconds and resets. Chapter 2 displays the positive track and Chapter 3 the negative track generated by $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$. Above the four spheres, the branch equations are written as $$\partial_t|\mathscr A\rangle=\pm(f/50)\sigma_j|\mathscr A\rangle$$. In both chapters the fast carrier uses the same forward phase $$ft\in[0,8\pi]$$ and therefore runs clockwise for four turns. The slow spinor actions use $$+ft/50$$ in Chapter 2 and $$-ft/50$$ in Chapter 3. The completed positive and negative tracks are each held for 5 seconds. The four top-row unit-sphere references are enlarged by 40 percent and carry the slow solid unnormalised Stokes-vector trajectories. The bottom row omits changing hodograph ellipses and instead shows the fast instantaneous $$\phi$$ vector, a circular endpoint and its pale-to-saturated trajectory. All vector arrows use sharp triangular heads, and the Chapter 1 hodograph direction triangles have no white outline. Panel titles reproduce the terminology of manuscript figure 2. No dashed branch encoding or square markers are used."""
     accessibility = """Accessibility description for movie 1
 
 The silent movie uses a white background, dark serif labels and fixed axes.
 
-Chapter 1 has a pale grey unit Stokes-Poincare sphere on the left, two numerical spinor entries in the centre and a physical hodograph on the right. The sphere axes are labelled S_x, S_y and S_z in upright roman mathematical type. Green, orange and blue sectors identify lambda, varphi and gamma. Two black tangent triangles on the hodograph identify clockwise motion in the northern hemisphere and counter-clockwise motion in the southern hemisphere; they disappear at linear polarisation. During the final section the previous right-panel construction becomes semi-transparent. A large blue circle and arrow rotate clockwise, a smaller red circle and arrow rotate counter-clockwise, and two dark dashed guide segments form a vector-addition parallelogram. Their sum is the opaque black arrow ending at a white circle. A time label inside the upper-left of the plot progresses from zero to two pi divided by f.
+Chapter 1 has a pale grey unit Stokes-Poincare sphere on the left, two numerical spinor entries in the centre and a physical hodograph on the right. The sphere axes are labelled S_x, S_y and S_z in upright roman mathematical type. Green, orange and blue sectors identify lambda, varphi and gamma. Two solid black tangent triangles without white outlines identify clockwise motion in the northern hemisphere and counter-clockwise motion in the southern hemisphere; they disappear at linear polarisation. During the final section the previous right-panel construction becomes semi-transparent. A large blue circle and arrow rotate clockwise, a smaller red circle and arrow rotate counter-clockwise, and two dark dashed guide segments form a vector-addition parallelogram. Their sum is the opaque black arrow ending at a white circle. A time label inside the upper-left of the plot progresses from zero to two pi divided by f.
 
-Chapter 2 contains the positive generator track in solid blue. Chapter 3 contains the negative generator track in solid red. Their typography matches movie 2, and the column titles follow manuscript figure 2: r-change, z-rotation, x-translation and y-translation. The top row contains enlarged pale grey unit-sphere references with slowly changing solid Stokes trajectories, circular current markers and white circular initial markers. The bottom row contains no changing ellipses. Each panel shows a fast clockwise rotating vector from the origin to a circular endpoint; the endpoint simultaneously follows the slowly changing polarisation and leaves a trajectory that changes gradually from pale to saturated colour. The fast phase increases from zero to eight pi in both chapters, completing four clockwise turns. The slow polarisation parameter is positive in Chapter 2 and negative in Chapter 3. Each completed four-turn track is held for five seconds. No square markers or dashed branch styles appear in Chapters 2 or 3."""
+Chapter 2 contains the positive generator track in solid blue. Chapter 3 contains the negative generator track in solid red. Their typography matches movie 2, and the column titles follow manuscript figure 2: r-change, z-rotation, x-translation and y-translation. Above each enlarged pale grey unit-sphere reference is the corresponding differential equation, with a plus sign in Chapter 2 and a minus sign in Chapter 3. The top row contains slowly changing solid Stokes trajectories, circular current markers and white circular initial markers. The bottom row contains no changing ellipses. Each panel shows a fast clockwise rotating vector from the origin to a circular endpoint; the endpoint simultaneously follows the slowly changing polarisation and leaves a trajectory that changes gradually from pale to saturated colour. Every vector arrow has a sharp triangular head. The fast phase increases from zero to eight pi in both chapters, completing four clockwise turns. The slow polarisation parameter is positive in Chapter 2 and negative in Chapter 3. Each completed four-turn track is held for five seconds. No square markers or dashed branch styles appear in Chapters 2 or 3."""
     manuscript_reference = (
         "The Stokes-Poincare representation and the local actions of the four "
         "matrix basis directions are illustrated dynamically in supplementary movie 1."
@@ -2072,6 +2102,9 @@ Spinor, Stokes and hodograph checks
 - Chapter 2/3 unit-sphere display scale: {metadata["display"]["chapter_2_3_generator_sphere_scale"]:.1f}
 - Chapter 2/3 typography reference: {metadata["display"]["chapter_2_3_typography_reference"]}
 - Chapter 2/3 panel-title reference: {metadata["display"]["chapter_2_3_panel_title_reference"]}
+- Chapter 2/3 generator equations shown above spheres: {metadata["display"]["chapter_2_3_generator_equations_above_spheres"]}
+- All vector-arrow heads are sharp triangles: {metadata["display"]["all_vector_arrowheads_are_sharp_triangles"]}
+- Chapter 1 direction-triangle white outline shown: {metadata["display"]["chapter_1_hodograph_direction_triangles_have_white_outline"]}
 - Chapter 2 / Chapter 3 clockwise fast-phase turns: {metadata["display"]["chapter_2_fast_phase_turns"]:.3f} / {metadata["display"]["chapter_3_fast_phase_turns"]:.3f}
 - Chapter 2 / Chapter 3 completed-track holds: {metadata["display"]["chapter_2_completed_track_hold_seconds"]:.2f} / {metadata["display"]["chapter_3_completed_track_hold_seconds"]:.2f} s
 - Chapter 2/3 fast-phase step error: {metadata["display"]["chapter_2_3_fast_phase_step_error_radians"]:.3e} rad
@@ -2128,6 +2161,7 @@ Checks and result
 - Numerical spinor entries: passed.
 - Upright roman Stokes-axis labels S_x, S_y and S_z: passed.
 - Two tangent-aligned hodograph direction triangles: passed.
+- Chapter 1 hodograph direction triangles have no white outline: passed.
 - Left/right gamma labels use the same close arc-offset ratio: passed.
 - Spinor constancy throughout the final rotary decomposition: passed.
 - Gamma held fixed throughout Chapter 1: passed.
@@ -2151,6 +2185,8 @@ Checks and result
 - Black hodograph arrow terminates at the white phase marker: passed.
 - Movie 1 typography and title-card hierarchy match Movie 2: passed.
 - Chapter 2/3 panel titles match manuscript Figure 2 terminology: passed.
+- Chapter 2/3 display the signed generator equation above every sphere: passed.
+- All vector arrows use sharp triangular heads without rounded joins: passed.
 - Chapter 2 contains a clockwise fast phase with slow positive generator evolution: passed.
 - Chapter 3 contains a clockwise fast phase with slow negative generator evolution: passed.
 - Chapter 2/3 fast phase completes four clockwise turns while the branch parameter changes by plus or minus 0.503: passed.
@@ -2192,7 +2228,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping and the local matrix-basis actions. Its typography and title-card hierarchy match movie 2. Chapter 1 shows the norm-one Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Its final section fades the original right-panel geometry and overlays clockwise and counter-clockwise circular component vectors, dashed vector-addition guides, the black resultant and an in-frame time from `0` to `2 pi/f`, followed by a five-second completed-turn hold. Chapter 2 shows the positive matrix-basis track in solid blue; Chapter 3 shows the negative track in solid red. Their panel titles reproduce manuscript Figure 2, and their top-row sphere references are enlarged by 40 percent. In the bottom row, the common forward phase `f t` drives four clockwise fast turns in both chapters, while the slow spinor actions use `+f t/50` and `-f t/50`, respectively. Each completed positive and negative track is held for five seconds. Solid phi vectors, circular endpoints and pale-to-saturated trajectories replace changing ellipses. No dashed branch encoding or square markers are used. The movie is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping and the local matrix-basis actions. Its typography and title-card hierarchy match movie 2. Chapter 1 shows the norm-one Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Its final section fades the original right-panel geometry and overlays clockwise and counter-clockwise circular component vectors, dashed vector-addition guides, the black resultant and an in-frame time from `0` to `2 pi/f`, followed by a five-second completed-turn hold. Its two hodograph direction triangles are solid black without white outlines. Chapter 2 shows the positive matrix-basis track in solid blue; Chapter 3 shows the negative track in solid red. Their panel titles reproduce manuscript Figure 2, their top-row sphere references are enlarged by 40 percent, and the corresponding signed differential equation is shown above every sphere. In the bottom row, the common forward phase `f t` drives four clockwise fast turns in both chapters, while the slow spinor actions use `+f t/50` and `-f t/50`, respectively. Each completed positive and negative track is held for five seconds. All vector arrows use sharp triangular heads. Solid phi vectors, circular endpoints and pale-to-saturated trajectories replace changing ellipses. No dashed branch encoding or square markers are used. The movie is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -2898,6 +2934,9 @@ def main() -> None:
                 "mathrm{S}_{z}",
             ],
             "chapter_1_hodograph_direction_triangle_count": 2,
+            "chapter_1_hodograph_direction_triangles_have_white_outline": (
+                False
+            ),
             "chapter_1_hodograph_direction_triangle_tangent_error": (
                 direction_triangle_tangent_error
             ),
@@ -2953,6 +2992,16 @@ def main() -> None:
             "chapter_2_3_text_font_stack": list(MOVIE_FONT_STACK),
             "chapter_2_3_typography_reference": "supplementary movie 2",
             "chapter_2_3_panel_title_reference": "manuscript Figure 2",
+            "chapter_2_3_generator_equations_above_spheres": True,
+            "chapter_2_generator_equation": (
+                "partial_t |A> = +(f/50) sigma_j |A>"
+            ),
+            "chapter_3_generator_equation": (
+                "partial_t |A> = -(f/50) sigma_j |A>"
+            ),
+            "all_vector_arrowheads_are_sharp_triangles": True,
+            "vector_arrowhead_join_style": TRIANGULAR_ARROW_JOIN_STYLE,
+            "vector_arrowhead_cap_style": TRIANGULAR_ARROW_CAP_STYLE,
             "chapter_2_3_top_titles": [
                 "sigma_0: r-change",
                 "sigma_1: z-rotation",
