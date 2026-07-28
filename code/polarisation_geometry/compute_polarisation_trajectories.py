@@ -30,6 +30,7 @@ GENERATOR_NAMES = np.asarray(["sigma_0", "sigma_1", "sigma_2", "sigma_3"])
 SPINOR_CONVENTION = "|A> = (A_up, conj(A_down))^T"
 DATA_FILENAME = "movie1_data.npz"
 METADATA_FILENAME = "movie1_metadata.json"
+GENERATOR_FAST_PHASE_TURNS = 4.0
 
 
 def complex_pair(value: complex) -> list[float]:
@@ -456,7 +457,11 @@ def build_dataset(sample_count: int, fast_phase_count: int) -> dict[str, np.ndar
         phase_gamma,
     )
 
-    generator_parameter = np.linspace(0.0, 5.0 * np.pi, sample_count)
+    generator_parameter = np.linspace(
+        0.0,
+        GENERATOR_FAST_PHASE_TURNS * 2.0 * np.pi,
+        sample_count,
+    )
     generator_positive, generator_negative = evolve_generator_branches(
         initial_spinor,
         generator_parameter,
