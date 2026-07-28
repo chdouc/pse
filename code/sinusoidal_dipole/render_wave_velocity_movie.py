@@ -66,6 +66,8 @@ TITLE_CARD_TITLE_POSITION = (0.5, 0.62)
 TITLE_CARD_SUBTITLE_POSITION = (0.5, 0.43)
 TITLE_CARD_REFERENCE_TITLE_FONTSIZE = 31.0
 TITLE_CARD_REFERENCE_SUBTITLE_FONTSIZE = 20.0
+SUBPLOT_TITLE_FONTSIZE = 20.0
+NRE_TITLE_FONTSIZE = 17.0
 JFM_PREPARING_URL = (
     "https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/"
     "information/author-instructions/preparing-your-materials"
@@ -245,7 +247,7 @@ class ChapterRenderer:
             {
                 "font.size": 15.0,
                 "axes.labelsize": 15.0,
-                "axes.titlesize": 17.0,
+                "axes.titlesize": SUBPLOT_TITLE_FONTSIZE,
                 "xtick.labelsize": 13.0,
                 "ytick.labelsize": 13.0,
                 "legend.fontsize": 11.5,
@@ -345,7 +347,7 @@ class ChapterRenderer:
         nre_axis.set_box_aspect(1)
         nre_axis.set_title(
             "Instantaneous NRE relative to HBEs",
-            fontsize=14.0,
+            fontsize=NRE_TITLE_FONTSIZE,
             pad=7.0,
         )
         nre_axis.set_xlabel(r"$t$ (IP)", labelpad=3.0)
@@ -1516,6 +1518,8 @@ def main() -> None:
                     for mode, wavelength in VERTICAL_WAVELENGTH_METRES.items()
                 },
                 "nre_y_limits_percent": nre_y_limits_percent,
+                "subplot_title_fontsize": SUBPLOT_TITLE_FONTSIZE,
+                "nre_title_fontsize": NRE_TITLE_FONTSIZE,
                 "upper_row_quantity": "|phi|^2/|phi_amp|^2",
                 "difference_quantity": (
                     "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2"

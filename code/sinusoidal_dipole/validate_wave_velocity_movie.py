@@ -82,6 +82,8 @@ EXPECTED_STYLE_ALIGNMENT = {
         "16": [0.0, 10.0],
         "32": [0.0, 10.0],
     },
+    "subplot_title_fontsize": 20.0,
+    "nre_title_fontsize": 17.0,
     "upper_row_quantity": "|phi|^2/|phi_amp|^2",
     "difference_quantity": "(|phi_model|^2-|phi_HBEs|^2)/|phi_amp|^2",
     "nre_quantity": "instantaneous complex-velocity NRE relative to HBEs",

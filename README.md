@@ -225,7 +225,8 @@ manuscript figures 8--10; its chapter cards also give the corresponding
 vertical wavelengths for the common 4000-m depth. Difference colourbars use
 the explicit model-minus-HBEs normalised squared-velocity expression, and the
 curve panel is labelled as instantaneous NRE to distinguish it from the
-time-averaged NRE in manuscript figure 8. Title-card hierarchy, font scale and
+time-averaged NRE in manuscript figure 8. Scientific-panel titles use 20-pt
+type, with 17-pt type for the longer NRE title. Title-card hierarchy, font scale and
 vertical placement are aligned with supplementary movie 1. Like movie 1, the
 opening uses an overall movie page followed by the first chapter page. The
 overall page lasts 2 seconds, while every Chapter page lasts 4 seconds so its
