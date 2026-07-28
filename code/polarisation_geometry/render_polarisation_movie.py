@@ -1,8 +1,9 @@
 """Render supplementary movie 1 from precomputed polarisation data.
 
-This script performs no spinor evolution, Stokes conversion or hodograph
-calculation.  It reads those quantities from ``movie1_data.npz``, draws fixed
-publication-style layouts, encodes H.264 video and writes submission sidecars.
+This script performs no spinor evolution or Stokes conversion. It reads the
+verified histories from ``movie1_data.npz``, evaluates the display-time fast
+carrier phase from those saved spinors, draws fixed publication-style layouts,
+encodes H.264 video and writes submission sidecars.
 """
 
 from __future__ import annotations
@@ -32,6 +33,13 @@ DATA_FILENAME = "movie1_data.npz"
 METADATA_FILENAME = "movie1_metadata.json"
 MOVIE_FILENAME = "movie1.mp4"
 PREVIEW_FILENAME = "movie1_preview.png"
+PREFERRED_TEXT_FONT = "Times New Roman"
+MOVIE_FONT_STACK = (
+    PREFERRED_TEXT_FONT,
+    "Times",
+    "STIXGeneral",
+    "DejaVu Serif",
+)
 BLUE = "#1f77b4"
 RED = "#d62728"
 GREY = "0.62"
@@ -45,11 +53,12 @@ ANGLE_ORANGE_FILL = "#fcd7b3"
 CAMERA_AZIMUTH = 110.75
 CAMERA_ELEVATION = 30.85
 CHAPTER_ONE_PHASE_TURN_SECONDS = 7.0
-CHAPTER_ONE_PHASE_HOLD_SECONDS = 1.5
+CHAPTER_ONE_PHASE_HOLD_SECONDS = 3.0
 CHAPTER_ONE_HODOGRAPH_PANEL_SCALE = 0.8
 GAMMA_LABEL_DISTANCE_RATIO = 1.24
 CHAPTER_ONE_PHASE_BACKGROUND_ALPHA = 0.18
 GENERATOR_SPHERE_SCALE = 1.4
+GENERATOR_INITIAL_RAY_ANGLE = np.deg2rad(54.75)
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -59,6 +68,7 @@ def publication_style(*, use_tex: bool) -> dict[str, object]:
         "axes.facecolor": "white",
         "savefig.facecolor": "white",
         "font.family": "serif",
+        "font.serif": list(MOVIE_FONT_STACK),
         "font.size": 15.0,
         "axes.labelsize": 16.0,
         "axes.titlesize": 17.0,
@@ -341,6 +351,58 @@ def rotary_component_vectors(
     clockwise = complex(spinor[0]) * np.exp(-1j * phase)
     counterclockwise = complex(np.conj(spinor[1])) * np.exp(1j * phase)
     return clockwise, counterclockwise
+
+
+def hodograph_phase_on_ray(
+    spinor: np.ndarray,
+    ray_angle: float,
+) -> tuple[float, complex]:
+    """Return the positive-ray phase and point on a spinor hodograph."""
+    component_up = complex(spinor[0])
+    component_down = complex(np.conj(spinor[1]))
+    cosine_coefficient = component_up + component_down
+    sine_coefficient = 1j * (component_down - component_up)
+    rotation = np.exp(-1j * ray_angle)
+    normal_cosine = float(np.imag(rotation * cosine_coefficient))
+    normal_sine = float(np.imag(rotation * sine_coefficient))
+    if np.hypot(normal_cosine, normal_sine) <= 1.0e-12:
+        raise ValueError("The requested hodograph ray is degenerate.")
+    base_phase = float(np.arctan2(-normal_cosine, normal_sine))
+    candidates: list[tuple[float, float, complex]] = []
+    for phase in (base_phase, base_phase + np.pi):
+        point = (
+            component_up * np.exp(-1j * phase)
+            + component_down * np.exp(1j * phase)
+        )
+        radial_coordinate = float(np.real(rotation * point))
+        candidates.append((radial_coordinate, phase, point))
+    radial_coordinate, phase, point = max(candidates, key=lambda item: item[0])
+    if radial_coordinate <= 0.0:
+        raise ValueError("The hodograph does not intersect the positive ray.")
+    cross_ray_error = abs(float(np.imag(rotation * point)))
+    if cross_ray_error > 2.0e-12:
+        raise ValueError("The hodograph-ray intersection is inaccurate.")
+    return float(np.mod(phase, 2.0 * np.pi)), point
+
+
+def generator_phi_track(
+    spinors: np.ndarray,
+    parameters: np.ndarray,
+    *,
+    direction: str,
+    phase_offset: float,
+) -> np.ndarray:
+    """Return the fast carrier motion along one slow generator branch."""
+    if direction not in {"positive", "negative"}:
+        raise ValueError("Generator direction must be positive or negative.")
+    if spinors.shape[0] != parameters.size:
+        raise ValueError("Spinor and generator-parameter tracks are misaligned.")
+    signed_phase = parameters if direction == "positive" else -parameters
+    phase = phase_offset + signed_phase
+    return (
+        spinors[:, 0] * np.exp(-1j * phase)
+        + np.conj(spinors[:, 1]) * np.exp(1j * phase)
+    )
 
 
 def gradient_segment_colours(color: str, count: int) -> np.ndarray:
@@ -863,11 +925,11 @@ def make_chapter_one(
         )
         figure.text(
             0.5,
-            0.945,
+            0.962,
             "Chapter 1: one spinor, two geometric representations",
             ha="center",
             va="top",
-            fontsize=24,
+            fontsize=25,
         )
         subtitle = figure.text(
             0.5,
@@ -988,20 +1050,20 @@ def make_generator_chapter(
         )
         figure.text(
             0.5,
-            0.955,
+            0.962,
             (
                 f"Chapter {chapter_number}: {direction_label.lower()} "
                 "actions of the four matrix basis directions"
             ),
             ha="center",
             va="top",
-            fontsize=23,
+            fontsize=25,
         )
         top_titles = (
-            r"$\sigma_0$: amplitude",
-            r"$\sigma_1$: rotation",
-            r"$\sigma_2$: stretching",
-            r"$\sigma_3$: stretching",
+            r"$\sigma_0$: $r$-change",
+            r"$\sigma_1$: $z$-rotation",
+            r"$\sigma_2$: $x$-translation",
+            r"$\sigma_3$: $y$-translation",
         )
         panels: list[GeneratorPanelArtists] = []
         for column in range(4):
@@ -1017,7 +1079,7 @@ def make_generator_chapter(
             draw_hodograph_axes(hodograph_axis, limit=1.7, ticks=True)
             sphere_axis.set_title(top_titles[column], pad=4)
             hodograph_axis.set_title(
-                rf"$\phi$-vector trajectory for $\sigma_{column}$",
+                rf"$\phi$ track for $\sigma_{column}$",
                 pad=8,
             )
             if column > 0:
@@ -1552,9 +1614,14 @@ def set_generator_chapter_frame(
     arrays: dict[str, np.ndarray],
     index: int,
 ) -> None:
-    """Update one signed chapter with solid vectors and gradient trails."""
+    """Update one signed chapter with fast phase and slow polarisation."""
     stokes = arrays[f"generator_stokes_{artists.direction}"]
-    hodographs = arrays[f"generator_hodograph_{artists.direction}"]
+    spinors = arrays[f"generator_spinor_{artists.direction}"]
+    parameters = arrays["generator_parameter"][: index + 1]
+    phase_offset, _ = hodograph_phase_on_ray(
+        arrays["initial_spinor"],
+        GENERATOR_INITIAL_RAY_ANGLE,
+    )
     for column, panel in enumerate(artists.panels):
         projected, _ = project_stokes(stokes[column, : index + 1])
         endpoint = projected[-1]
@@ -1573,7 +1640,12 @@ def set_generator_chapter_frame(
             [initial_endpoint[1]],
         )
 
-        phi_track = hodographs[column, : index + 1, 0]
+        phi_track = generator_phi_track(
+            spinors[column, : index + 1],
+            parameters,
+            direction=artists.direction,
+            phase_offset=phase_offset,
+        )
         phi_points = np.column_stack(
             [np.real(phi_track), np.imag(phi_track)]
         )
@@ -1594,11 +1666,14 @@ def set_generator_chapter_frame(
             [initial_phi[1]],
         )
 
-    parameter = arrays["generator_parameter"][index]
-    sign = "+" if artists.direction == "positive" else "-"
+    parameter = float(arrays["generator_parameter"][index])
+    signed_parameter = (
+        parameter if artists.direction == "positive" else -parameter
+    )
+    branch = "Positive" if artists.direction == "positive" else "Negative"
     artists.parameter_text.set_text(
-        f"{sign} branch: generator parameter f t = {parameter:.3f}; "
-        "top-row Stokes vectors are unnormalised and each unit sphere is a scale reference"
+        rf"{branch} branch: signed fast phase $ft={signed_parameter:+.3f}$; "
+        rf"slow polarisation parameter $ft/50={signed_parameter / 50.0:+.3f}$"
     )
 
 
@@ -1878,14 +1953,14 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text and submission notes."""
     initial = metadata["initial_state"]
-    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 shows the unit Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. In the final fixed-polarisation section, the right-panel construction is faded to a background layer. The two foreground rotary vectors $$\mathscr A_\uparrow\exp(-\mathrm{i}ft)$$ and $$\mathscr A_\downarrow\exp(\mathrm{i}ft)$$ move on clockwise and counter-clockwise circles, respectively. Dashed parallelogram guides show their exact vector sum, whose endpoint is the white marker on the black hodograph vector. The time inside the plot advances from $$t=0$$ to $$t=2\pi/f$$, holds for 1.5 seconds and resets. Chapter 2 displays only the positive exact actions $$|\mathscr A(t)\rangle=\exp(f t\tau/50)|\mathscr A(0)\rangle$$, and Chapter 3 displays only the corresponding negative actions. In both chapters the four top-row unit-sphere references are enlarged by 40 percent and carry solid unnormalised Stokes-vector trajectories. The bottom row omits changing hodograph ellipses and instead shows a solid instantaneous $$\phi$$ vector, a circular endpoint and a pale-to-saturated endpoint trajectory. No dashed branch encoding or square markers are used."""
+    caption = r"""movie 1. Dynamic Stokes-Poincare and hodograph geometry of a local near-inertial-wave polarisation state. The NIW polarisation spinor is $$|\mathscr A\rangle=(\mathscr A_\uparrow,\mathscr A_\downarrow^\ast)^T$$, with $$\mathrm S_x=2\operatorname{Re}(\mathscr A_\uparrow\mathscr A_\downarrow)$$, $$\mathrm S_y=2\operatorname{Im}(\mathscr A_\uparrow\mathscr A_\downarrow)$$ and $$\mathrm S_z=|\mathscr A_\uparrow|^2-|\mathscr A_\downarrow|^2$$. Chapter 1 shows the unit Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Green, orange and blue arcs show $$\lambda$$, $$\varphi$$ and $$\gamma$$ on the sphere, and $$\lambda/2$$, $$\varphi/2$$ and $$\gamma$$ on the hodograph. Northern-hemisphere states correspond to clockwise hodograph motion and southern-hemisphere states to counter-clockwise motion. In the final fixed-polarisation section, the right-panel construction is faded to a background layer. The two foreground rotary vectors $$\mathscr A_\uparrow\exp(-\mathrm{i}ft)$$ and $$\mathscr A_\downarrow\exp(\mathrm{i}ft)$$ move on clockwise and counter-clockwise circles, respectively. Dashed parallelogram guides show their exact vector sum, whose endpoint is the white marker on the black hodograph vector. The time inside the plot advances from $$t=0$$ to $$t=2\pi/f$$, holds for 3 seconds and resets. Chapter 2 displays the positive track and Chapter 3 the negative track generated by $$|\mathscr A(t)\rangle=\exp(\pm f t\tau/50)|\mathscr A(0)\rangle$$. In each chapter the signed fast carrier phase $$\pm ft$$ completes 2.5 turns while the polarisation spinor changes on the fifty-times-slower parameter $$\pm ft/50$$. The four top-row unit-sphere references are enlarged by 40 percent and carry the slow solid unnormalised Stokes-vector trajectories. The bottom row omits changing hodograph ellipses and instead shows the fast instantaneous $$\phi$$ vector, a circular endpoint and its pale-to-saturated trajectory. Panel titles reproduce the terminology of manuscript figure 2. No dashed branch encoding or square markers are used."""
     accessibility = """Accessibility description for movie 1
 
 The silent movie uses a white background, dark serif labels and fixed axes.
 
 Chapter 1 has a pale grey unit Stokes-Poincare sphere on the left, two numerical spinor entries in the centre and a physical hodograph on the right. The sphere axes are labelled S_x, S_y and S_z in upright roman mathematical type. Green, orange and blue sectors identify lambda, varphi and gamma. Two black tangent triangles on the hodograph identify clockwise motion in the northern hemisphere and counter-clockwise motion in the southern hemisphere; they disappear at linear polarisation. During the final section the previous right-panel construction becomes semi-transparent. A large blue circle and arrow rotate clockwise, a smaller red circle and arrow rotate counter-clockwise, and two dark dashed guide segments form a vector-addition parallelogram. Their sum is the opaque black arrow ending at a white circle. A time label inside the upper-left of the plot progresses from zero to two pi divided by f.
 
-Chapter 2 contains only positive generator actions in solid blue. Chapter 3 contains only negative generator actions in solid red. Each chapter has four columns labelled sigma_0 through sigma_3. The top row contains enlarged pale grey unit-sphere references with solid Stokes trajectories, circular current markers and white circular initial markers. The bottom row contains no ellipses. Each panel shows a solid vector from the origin to a circular endpoint and a trajectory that changes gradually from pale to saturated colour. No square markers or dashed branch styles appear in Chapters 2 or 3."""
+Chapter 2 contains the positive generator track in solid blue. Chapter 3 contains the negative generator track in solid red. Their typography matches movie 2, and the column titles follow manuscript figure 2: r-change, z-rotation, x-translation and y-translation. The top row contains enlarged pale grey unit-sphere references with slowly changing solid Stokes trajectories, circular current markers and white circular initial markers. The bottom row contains no changing ellipses. Each panel shows a fast rotating vector from the origin to a circular endpoint; the endpoint simultaneously follows the slowly changing polarisation and leaves a trajectory that changes gradually from pale to saturated colour. The signed fast phase completes positive turns in Chapter 2 and negative turns in Chapter 3. No square markers or dashed branch styles appear in Chapters 2 or 3."""
     manuscript_reference = (
         "The Stokes-Poincare representation and the local actions of the four "
         "matrix basis directions are illustrated dynamically in supplementary movie 1."
@@ -1964,6 +2039,14 @@ Spinor, Stokes and hodograph checks
 - Chapter count: {metadata["display"]["chapter_count"]}
 - Chapter 2 / Chapter 3 directions: {metadata["display"]["chapter_2_direction"]} / {metadata["display"]["chapter_3_direction"]}
 - Chapter 2/3 unit-sphere display scale: {metadata["display"]["chapter_2_3_generator_sphere_scale"]:.1f}
+- Chapter 2/3 typography reference: {metadata["display"]["chapter_2_3_typography_reference"]}
+- Chapter 2/3 panel-title reference: {metadata["display"]["chapter_2_3_panel_title_reference"]}
+- Chapter 2 / Chapter 3 signed fast-phase turns: {metadata["display"]["chapter_2_signed_fast_phase_turns"]:.3f} / {metadata["display"]["chapter_3_signed_fast_phase_turns"]:.3f}
+- Chapter 2/3 fast-phase step error: {metadata["display"]["chapter_2_3_fast_phase_step_error_radians"]:.3e} rad
+- Chapter 2/3 fast-to-slow parameter ratio: {metadata["display"]["chapter_2_3_fast_to_slow_parameter_ratio"]:.1f}
+- Chapter 2/3 initial-marker ray error: {metadata["display"]["chapter_2_3_initial_marker_ray_error_radians"]:.3e} rad
+- Chapter 2/3 common initial-marker error: {metadata["display"]["chapter_2_3_initial_marker_common_error"]:.3e}
+- Chapter 2/3 fast-phase phi-track definition error: {metadata["display"]["chapter_2_3_phi_track_definition_error"]:.3e}
 - Chapter 2/3 changing hodograph ellipses shown: {metadata["display"]["chapter_2_3_hodograph_ellipses_shown"]}
 - Chapter 2/3 dashed or square direction encoding used: {metadata["display"]["chapter_2_3_direction_encoding_uses_dashes_or_squares"]}
 
@@ -1981,7 +2064,8 @@ Reference comparison
 - Figure 1 was rendered before production. The movie uses the same left-right Stokes-sphere/hodograph logic, white background, serif mathematical typography, pale grey sphere, black hodograph and white outlined state marker.
 - Chapter 1 also reproduces the reference green lambda, orange varphi and blue gamma angle sectors, with half-angle labels on the hodograph.
 - The centre contains only the numerical spinor; the definition and phi equation are intentionally omitted.
-- Figure 2 was rendered before production. Its four generator columns are retained, but the positive and negative branches are separated into Chapters 2 and 3. The top sphere references are enlarged by 40 percent, and the lower panels are converted from changing ellipses to solid phi vectors with gradient endpoint trajectories.
+- Figure 2 was rendered before production. Its r-change, z-rotation, x-translation, y-translation and phi-track titles are reproduced. The positive and negative tracks are separated into Chapters 2 and 3. The top sphere references are enlarged by 40 percent, and the lower panels show the fast carrier phase moving together with the fifty-times-slower polarisation change.
+- Movie 2 was inspected before production. Movie 1 uses the same Times New Roman, Times, STIXGeneral and DejaVu Serif fallback stack and the same title-card hierarchy.
 
 Representative encoded frames inspected
 - 4.3 s: north-pole clockwise circular polarisation.
@@ -1991,16 +2075,16 @@ Representative encoded frames inspected
 - 16.5 s: ellipticity scan.
 - 23.5 s: longitude-driven ellipse rotation.
 - 30.5 s: rotary-vector decomposition with faded background, two circular components, dashed addition guides and an in-frame time label.
-- 34.5 s: completed-turn pause.
-- 36.2 s: Chapter 2 positive-action title.
-- 37.6 s: common initial frame for the four positive generator actions.
-- 44.5 s: intermediate positive actions.
-- 51.3 s: positive endpoints.
-- 52.5 s: Chapter 3 negative-action title.
-- 53.6 s: common initial frame for the four negative generator actions.
-- 60.5 s: intermediate negative actions.
-- 67.3 s: negative endpoints.
-- 69.0 s: final held frame.
+- 35.5 s: completed-turn pause during the extended Chapter 1 hold.
+- 37.5 s: Chapter 2 positive-track title.
+- 39.1 s: common initial frame for the four positive generator tracks.
+- 46.0 s: intermediate positive fast-phase/slow-polarisation motion.
+- 52.8 s: positive endpoints after 2.5 fast turns.
+- 53.5 s: Chapter 3 negative-track title.
+- 55.1 s: common initial frame for the four negative generator tracks.
+- 62.0 s: intermediate negative fast-phase/slow-polarisation motion.
+- 68.8 s: negative endpoints after 2.5 reverse fast turns.
+- 70.5 s: final held frame.
 
 Checks and result
 - Mathematical labels and spinor convention: passed.
@@ -2019,7 +2103,7 @@ Checks and result
 - In-frame time label runs from t=0 to t=2 pi/f: passed.
 - Final right-panel background alpha and foreground hierarchy: passed.
 - One uniform final fast-phase turn and exact reset: passed.
-- Completed 360-degree turn held for 1.5 s before reset: passed.
+- Completed 360-degree turn held for 3.0 s before reset: passed.
 - Final blue gamma arc and grey reference ray remain fixed: passed.
 - Left unit-vector note positioned immediately above-left of the sphere: passed.
 - Complete right hodograph plot frame and contents shown at 80 percent panel scale with unchanged typography: passed.
@@ -2031,8 +2115,13 @@ Checks and result
 - Bottom explanatory line contains no malformed or inverted-question-mark glyph: passed.
 - Northern-hemisphere clockwise and southern-hemisphere counter-clockwise motion: passed.
 - Black hodograph arrow terminates at the white phase marker: passed.
-- Chapter 2 contains only positive solid circular-marker trajectories: passed.
-- Chapter 3 contains only negative solid circular-marker trajectories: passed.
+- Movie 1 typography and title-card hierarchy match Movie 2: passed.
+- Chapter 2/3 panel titles match manuscript Figure 2 terminology: passed.
+- Chapter 2 contains the positive signed fast phase with slow positive generator evolution: passed.
+- Chapter 3 contains the negative signed fast phase with slow negative generator evolution: passed.
+- Chapter 2/3 fast phase completes 2.5 turns while the slow parameter changes by 0.314: passed.
+- Chapter 2/3 fast-to-slow parameter ratio is 50: passed.
+- Chapter 2/3 initial white marker lies on the Figure 2 reference ray: passed.
 - Chapter 2/3 sphere references enlarged by 40 percent: passed.
 - Chapter 2/3 lower panels contain no changing ellipses: passed.
 - Chapter 2/3 contain no dashed branch styles or square markers: passed.
@@ -2068,7 +2157,7 @@ Checks and result
 
     readme_section = f"""## Movie 1 - polarisation geometry
 
-`movie1.mp4` dynamically explains the Stokes-Poincare mapping and the local matrix-basis actions. Chapter 1 shows the norm-one Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Its final section fades the original right-panel geometry and overlays clockwise and counter-clockwise circular component vectors, dashed vector-addition guides, the black resultant and an in-frame time from `0` to `2 pi/f`. Chapter 2 shows only positive matrix-basis actions in solid blue; Chapter 3 shows only negative actions in solid red. Their top-row sphere references are enlarged by 40 percent. Their bottom rows contain solid phi vectors, circular endpoints and pale-to-saturated trajectories rather than changing ellipses. No dashed branch encoding or square markers are used. The movie is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
+`movie1.mp4` dynamically explains the Stokes-Poincare mapping and the local matrix-basis actions. Its typography and title-card hierarchy match movie 2. Chapter 1 shows the norm-one Bloch/Stokes vector, the numerical polarisation spinor and the physical hodograph. Its final section fades the original right-panel geometry and overlays clockwise and counter-clockwise circular component vectors, dashed vector-addition guides, the black resultant and an in-frame time from `0` to `2 pi/f`, followed by a three-second completed-turn hold. Chapter 2 shows the positive matrix-basis track in solid blue; Chapter 3 shows the negative track in solid red. Their panel titles reproduce manuscript Figure 2, and their top-row sphere references are enlarged by 40 percent. In the bottom row, a signed fast phase completes 2.5 turns while the polarisation changes on the fifty-times-slower generator parameter. Solid phi vectors, circular endpoints and pale-to-saturated trajectories replace changing ellipses. No dashed branch encoding or square markers are used. The movie is silent, encoded as H.264/yuv420p at {video["width"]} x {video["height"]} and {video["frame_rate_fps"]:.6g} fps, and is accompanied by a separate caption and accessibility description.
 
 Files:
 
@@ -2278,8 +2367,7 @@ def render_movie(
     count = frame_counts["generator_positive"]
     for frame_index in range(count):
         progress = frame_index / max(count - 1, 1)
-        smooth = progress * progress * (3.0 - 2.0 * progress)
-        data_index = int(round(smooth * (sample_count - 1)))
+        data_index = int(round(progress * (sample_count - 1)))
         set_generator_chapter_frame(chapter_two, arrays, data_index)
         send(canvas_rgb(chapter_two.figure))
 
@@ -2290,8 +2378,7 @@ def render_movie(
     final_generator_frame: np.ndarray | None = None
     for frame_index in range(count):
         progress = frame_index / max(count - 1, 1)
-        smooth = progress * progress * (3.0 - 2.0 * progress)
-        data_index = int(round(smooth * (sample_count - 1)))
+        data_index = int(round(progress * (sample_count - 1)))
         set_generator_chapter_frame(chapter_three, arrays, data_index)
         final_generator_frame = canvas_rgb(chapter_three.figure)
         send(final_generator_frame)
@@ -2570,6 +2657,77 @@ def main() -> None:
         np.ptp(counterclockwise_radii)
     )
     rotary_sum_error = float(max(rotary_sum_errors))
+    generator_phase_offset, generator_initial_point = hodograph_phase_on_ray(
+        arrays["initial_spinor"],
+        GENERATOR_INITIAL_RAY_ANGLE,
+    )
+    generator_initial_ray_error = float(
+        abs(
+            np.angle(
+                generator_initial_point
+                * np.exp(-1j * GENERATOR_INITIAL_RAY_ANGLE)
+            )
+        )
+    )
+    generator_track_definition_errors = []
+    generator_initial_marker_errors = []
+    generator_signed_turns: dict[str, float] = {}
+    generator_fast_phase_step_errors: dict[str, float] = {}
+    generator_parameter = arrays["generator_parameter"]
+    for direction in ("positive", "negative"):
+        spinor_histories = arrays[f"generator_spinor_{direction}"]
+        signed_phase = (
+            generator_parameter
+            if direction == "positive"
+            else -generator_parameter
+        )
+        expected_generator_step = float(
+            (signed_phase[-1] - signed_phase[0])
+            / (signed_phase.size - 1)
+        )
+        generator_fast_phase_step_errors[direction] = float(
+            np.max(
+                np.abs(np.diff(signed_phase) - expected_generator_step)
+            )
+        )
+        generator_signed_turns[direction] = float(
+            (signed_phase[-1] - signed_phase[0]) / (2.0 * np.pi)
+        )
+        for column in range(4):
+            track = generator_phi_track(
+                spinor_histories[column],
+                generator_parameter,
+                direction=direction,
+                phase_offset=generator_phase_offset,
+            )
+            direct = (
+                spinor_histories[column, :, 0]
+                * np.exp(-1j * (generator_phase_offset + signed_phase))
+                + np.conj(spinor_histories[column, :, 1])
+                * np.exp(1j * (generator_phase_offset + signed_phase))
+            )
+            generator_track_definition_errors.append(
+                float(np.max(np.abs(track - direct)))
+            )
+            generator_initial_marker_errors.append(
+                float(abs(track[0] - generator_initial_point))
+            )
+    generator_track_definition_error = float(
+        max(generator_track_definition_errors)
+    )
+    generator_initial_marker_error = float(
+        max(generator_initial_marker_errors)
+    )
+    generator_fast_phase_step_error = float(
+        max(generator_fast_phase_step_errors.values())
+    )
+    if (
+        generator_initial_ray_error > 2.0e-12
+        or generator_track_definition_error > 2.0e-12
+        or generator_initial_marker_error > 2.0e-12
+        or generator_fast_phase_step_error > 2.0e-12
+    ):
+        raise ValueError("The fast-phase generator tracks failed validation.")
     pre_final_relative_gamma_variation = float(
         np.ptp(np.asarray(pre_final_relative_gamma))
     )
@@ -2746,6 +2904,45 @@ def main() -> None:
             "chapter_2_3_hodograph_ellipses_shown": False,
             "chapter_2_3_direction_encoding_uses_dashes_or_squares": False,
             "chapter_2_3_current_and_initial_markers_are_circles": True,
+            "chapter_2_3_text_font_stack": list(MOVIE_FONT_STACK),
+            "chapter_2_3_typography_reference": "supplementary movie 2",
+            "chapter_2_3_panel_title_reference": "manuscript Figure 2",
+            "chapter_2_3_top_titles": [
+                "sigma_0: r-change",
+                "sigma_1: z-rotation",
+                "sigma_2: x-translation",
+                "sigma_3: y-translation",
+            ],
+            "chapter_2_3_bottom_title_pattern": "phi track for sigma_j",
+            "chapter_2_3_fast_phase_source": "signed f t",
+            "chapter_2_fast_phase_direction": "positive",
+            "chapter_3_fast_phase_direction": "negative",
+            "chapter_2_signed_fast_phase_turns": (
+                generator_signed_turns["positive"]
+            ),
+            "chapter_3_signed_fast_phase_turns": (
+                generator_signed_turns["negative"]
+            ),
+            "chapter_2_3_fast_phase_step_error_radians": (
+                generator_fast_phase_step_error
+            ),
+            "chapter_2_3_slow_polarisation_parameter": (
+                "signed f t / 50"
+            ),
+            "chapter_2_3_fast_to_slow_parameter_ratio": 50.0,
+            "chapter_2_3_initial_marker_ray_degrees": (
+                np.degrees(GENERATOR_INITIAL_RAY_ANGLE)
+            ),
+            "chapter_2_3_initial_marker_ray_error_radians": (
+                generator_initial_ray_error
+            ),
+            "chapter_2_3_initial_marker_common_error": (
+                generator_initial_marker_error
+            ),
+            "chapter_2_3_phi_track_definition_error": (
+                generator_track_definition_error
+            ),
+            "chapter_2_3_generator_frame_schedule": "linear in f t",
         }
     )
     metadata_path.write_text(
