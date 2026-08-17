@@ -350,7 +350,7 @@ repository.
   compression PSNR and readable preview/contact-sheet dimensions;
 - the MP4 container, H.264 profile, yuv420p pixel format, resolution, constant
   frame rate, frame count, duration, absence of audio, fast-start ordering,
-  decodability and 50 MB size limit.
+  decodability and 10 MB size limit.
 
 During repository preparation, the reorganized scripts were also compared
 with the original manuscript scripts. Eigenvalues, eigenvectors, error

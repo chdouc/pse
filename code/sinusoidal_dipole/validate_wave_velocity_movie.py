@@ -562,7 +562,10 @@ def check_media(
         raise ValueError("Movie unexpectedly contains an audio stream.")
     size_bytes = int(format_info["size"])
     if size_bytes >= MAX_FILE_BYTES:
-        raise ValueError(f"Movie is not smaller than 50 MB: {size_bytes} bytes.")
+        raise ValueError(
+            f"Movie is not smaller than {MAX_FILE_BYTES / 1_000_000:g} MB: "
+            f"{size_bytes} bytes."
+        )
 
     video_bytes = video_path.read_bytes()
     moov_position = video_bytes.find(b"moov")
@@ -844,7 +847,7 @@ def main() -> None:
             "numbered_movie_2": True,
             "separate_caption": True,
             "caption_tex_math": True,
-            "under_50_mb": True,
+            "under_10_mb": True,
             "silent": True,
             "official_preparing_materials_url": JFM_PREPARING_URL,
             "official_submitting_materials_url": JFM_SUBMITTING_URL,
