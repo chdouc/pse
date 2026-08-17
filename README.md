@@ -147,16 +147,17 @@ Prepare, render, and validate supplementary movie 2:
 ```bash
 python run_workflow.py sinusoidal_dipole_movie \
   --data-root path/to/processed/sweep \
-  --raw-data-root path/to/raw/sweep \
   --output-directory path/to/movies \
   --ffmpeg path/to/ffmpeg \
   --ffprobe path/to/ffprobe
 ```
 
 The movie workflow accepts either `--data-root` (containing one
-`*_index.csv`) or `--index`. The raw root retains the PSE rotary components
-needed for explicit physical-velocity reconstruction. Local input paths are
-always supplied at run time and are not stored in the public workflow.
+`*_index.csv`) or `--index`. Each selected processed MATLAB file must contain
+the complete YBJ, TSB, YBJ+, PSE and HBE complex-velocity fields on the
+manuscript's 128-by-128 grid with `fc=64` (64 time steps per inertial period),
+together with the step-resolved NRE curves. Local input paths are always
+supplied at run time and are not stored in the public workflow.
 
 On systems without LaTeX, for example:
 

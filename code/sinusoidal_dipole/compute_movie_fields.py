@@ -1,9 +1,11 @@
 """Prepare the fields for supplementary movie 2.
 
-The calculation stage reads MATLAB v7.3 files, reconstructs the physical PSE
-velocity at true saved integer-inertial-period times, verifies those fields
-against the processed Figure 9--10 data, and writes a self-describing NPZ
-archive.  It performs no plotting or video encoding.
+The calculation stage reads the processed MATLAB v7.3 files used for Figures
+9--10, validates their 128-by-128 grid and 64 time steps per inertial period,
+extracts every true
+saved integer-inertial-period state, checks the stored NRE curves against the
+saved complex velocities, and writes a self-describing NPZ archive.  It
+performs no plotting or video encoding.
 """
 
 from __future__ import annotations
@@ -31,13 +33,21 @@ NRE_MODEL_NAMES = MODEL_NAMES[:4]
 VERTICAL_MODES = ((4, 1000.0), (16, 250.0), (32, 125.0))
 BACKGROUND_SPEED = 0.25
 DOMAIN_DEPTH_M = 4000.0
-RAW_FILENAME = "four_model_raw_timeseries.mat"
+GRID_POINTS = 128
+STEPS_PER_INERTIAL_PERIOD = 64
 PROCESSED_MODEL_DATASETS = (
     "ybj_uiv_full",
     "tsb_uiv_full",
     "ybjplus_uiv_full",
     "spin_uiv_full",
     "OUT_phi/phi",
+)
+PROCESSED_TIME_DATASETS = (
+    "phi_saved_periods",
+    "spin_saved_periods",
+    "ybjplus_saved_periods",
+    "ybj_saved_periods",
+    "tsb_saved_periods",
 )
 NRE_DATASETS = (
     "err_complex_phi_ybj_step",
@@ -46,13 +56,11 @@ NRE_DATASETS = (
     "err_complex_phi_spin_step",
 )
 
-# The n=4 and n=32 ranges reproduce the published Figure 10 scales.  The
-# intermediate n=16 range is centred on the unperturbed value one and covers
-# all but the most intense upper tail. Clipping is counted over every model
-# and time.
+# These ranges reproduce the row colour limits in the 128-by-128 Figure 10.
+# Clipping is counted over every model and time.
 FIXED_ABSOLUTE_LIMITS = {
     4: (0.01, 10.0),
-    16: (0.50, 1.50),
+    16: (0.39, 1.61),
     32: (0.88, 1.12),
 }
 
@@ -154,77 +162,88 @@ def find_processed_cases(index_path: Path) -> list[dict[str, Any]]:
     return selected
 
 
-def raw_case_matches(path: Path, wavelength_m: float) -> bool:
-    """Return whether a raw file has the controlled movie parameters."""
-    try:
-        with h5py.File(path, "r") as handle:
-            speed = scalar(handle["background_velocity_mps"])
-            kz = scalar(handle["P_phi/kz"])
-            wavelength = 2.0 * np.pi / kz
-            return bool(
-                np.isclose(speed, BACKGROUND_SPEED, rtol=0.0, atol=1.0e-12)
-                and np.isclose(
-                    wavelength,
-                    wavelength_m,
-                    rtol=0.0,
-                    atol=1.0e-8,
-                )
-            )
-    except (KeyError, OSError, ValueError):
-        return False
-
-
-def find_raw_case(
-    raw_data_root: Path,
-    processed_path: Path,
+def require_processed_case(
+    handle: h5py.File,
+    *,
+    mode: int,
     wavelength_m: float,
-) -> Path:
-    """Find the parameter-matched raw file that retains PSE components."""
-    processed_name = processed_path.parent.name
-    base_name = (
-        processed_name[:-3] if processed_name.endswith("_01") else processed_name
-    )
-    direct = raw_data_root / base_name / RAW_FILENAME
-    if direct.is_file() and raw_case_matches(direct, wavelength_m):
-        return direct.resolve()
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate one processed 128-by-128, fc=64 full-field case."""
+    scalar_checks = {
+        "background_velocity_mps": BACKGROUND_SPEED,
+        "nxy": float(GRID_POINTS),
+        "fc": float(STEPS_PER_INERTIAL_PERIOD),
+        "P_phi/Nxy": float(GRID_POINTS),
+        "P_phi/fc": float(STEPS_PER_INERTIAL_PERIOD),
+    }
+    for name, expected in scalar_checks.items():
+        actual = scalar(handle[name])
+        if not np.isclose(actual, expected, rtol=0.0, atol=1.0e-12):
+            raise ValueError(
+                f"n={mode}: {name}={actual:g}; expected {expected:g}."
+            )
 
-    candidates = [
-        path
-        for path in raw_data_root.glob(f"*/{RAW_FILENAME}")
-        if raw_case_matches(path, wavelength_m)
-    ]
-    if len(candidates) != 1:
-        raise RuntimeError(
-            f"Expected one raw case for Lv={wavelength_m:g} m in "
-            f"{raw_data_root}; found {len(candidates)}."
+    kz = scalar(handle["P_phi/kz"])
+    actual_wavelength = 2.0 * np.pi / kz
+    if not np.isclose(
+        actual_wavelength,
+        wavelength_m,
+        rtol=0.0,
+        atol=1.0e-8,
+    ):
+        raise ValueError(
+            f"n={mode}: vertical wavelength is {actual_wavelength:g} m; "
+            f"expected {wavelength_m:g} m."
         )
-    return candidates[0].resolve()
+    if int(round(scalar(handle["include_tsb"]))) != 1:
+        raise ValueError(f"n={mode}: the processed file does not include TSB.")
 
-
-def require_time_alignment(handle: h5py.File) -> np.ndarray:
-    """Validate that every raw model uses the same true saved times."""
-    names = (
-        "hbe_time_periods",
-        "pse_time_periods",
-        "ybjplus_time_periods",
-        "ybj_time_periods",
-        "tsb_time_periods",
-    )
-    arrays = [np.asarray(handle[name]).squeeze().astype(float) for name in names]
-    reference = arrays[0]
+    time_arrays = [
+        np.asarray(handle[name]).squeeze().astype(float)
+        for name in PROCESSED_TIME_DATASETS
+    ]
+    reference = time_arrays[0]
     if reference.ndim != 1 or reference.size < 2:
-        raise ValueError("Raw movie times must be a non-trivial one-dimensional array.")
+        raise ValueError(
+            f"n={mode}: saved field times must be a non-trivial 1-D array."
+        )
     if not np.all(np.diff(reference) > 0.0):
-        raise ValueError("Raw movie times are not strictly increasing.")
-    for name, values in zip(names[1:], arrays[1:], strict=True):
+        raise ValueError(f"n={mode}: saved field times are not strictly increasing.")
+    for name, values in zip(
+        PROCESSED_TIME_DATASETS[1:],
+        time_arrays[1:],
+        strict=True,
+    ):
         if values.shape != reference.shape or not np.allclose(
             values,
             reference,
             rtol=0.0,
             atol=1.0e-12,
         ):
-            raise ValueError(f"{name} is not aligned with hbe_time_periods.")
-    return reference
+            raise ValueError(
+                f"n={mode}: {name} is not aligned with phi_saved_periods."
+            )
+
+    expected_shape = (reference.size, GRID_POINTS, GRID_POINTS)
+    for name in PROCESSED_MODEL_DATASETS:
+        if handle[name].shape != expected_shape:
+            raise ValueError(
+                f"n={mode}: {name} has shape {handle[name].shape}; "
+                f"expected {expected_shape}."
+            )
+
+    error_times = np.asarray(handle["error_time_periods"]).squeeze().astype(float)
+    if error_times.ndim != 1 or error_times.size < reference.size:
+        raise ValueError(f"n={mode}: the step-error time array is incomplete.")
+    if not np.all(np.diff(error_times) > 0.0):
+        raise ValueError(f"n={mode}: step-error times are not strictly increasing.")
+    if not np.isclose(error_times[0], reference[0], atol=1.0e-12) or not np.isclose(
+        error_times[-1],
+        reference[-1],
+        atol=1.0e-12,
+    ):
+        raise ValueError(f"n={mode}: field and step-error time spans differ.")
+    return reference, error_times
 
 
 def select_true_times(
@@ -268,12 +287,11 @@ def normalized_root_mean_square_error(
     return float(np.sqrt(np.sum(np.abs(model - reference) ** 2) / denominator))
 
 
-def processed_time_index(handle: h5py.File, target: float) -> int:
-    """Return the exact processed-field index for one inertial-period time."""
-    available = np.asarray(handle["phi_saved_periods"]).squeeze().astype(float)
+def exact_time_index(available: np.ndarray, target: float) -> int:
+    """Return the exact index of one inertial-period time."""
     index = int(np.argmin(np.abs(available - target)))
     if not np.isclose(available[index], target, rtol=0.0, atol=1.0e-12):
-        raise ValueError(f"Processed field time {target:g} IP is unavailable.")
+        raise ValueError(f"Exact time {target:g} IP is unavailable.")
     return index
 
 
@@ -296,7 +314,6 @@ def clipping_record(values: np.ndarray, lower: float, upper: float) -> dict[str,
 
 def compute_archive(
     index_path: Path,
-    raw_data_root: Path,
     *,
     start_ip: float,
     stop_ip: float,
@@ -313,12 +330,9 @@ def compute_archive(
     mode_nre_times: list[np.ndarray] = []
     selected_source_indices: list[np.ndarray] = []
     normalization_amplitudes: list[float] = []
-    raw_sources: list[str] = []
     processed_sources: list[str] = []
-    raw_hashes: list[str] = []
     processed_hashes: list[str] = []
-    field_reference_differences: list[np.ndarray] = []
-    nre_reference_differences: list[np.ndarray] = []
+    recomputed_nre_differences: list[np.ndarray] = []
     mode_metadata: list[dict[str, Any]] = []
     selected_times: np.ndarray | None = None
 
@@ -326,15 +340,14 @@ def compute_archive(
         mode = int(case["mode"])
         wavelength_m = float(case["wavelength_m"])
         processed_path = Path(case["processed_path"])
-        raw_path = find_raw_case(raw_data_root, processed_path, wavelength_m)
-        print(f"n={mode}: raw={raw_path}")
-        print(f"n={mode}: processed reference={processed_path}")
+        print(f"n={mode}: processed full fields={processed_path}")
 
-        with (
-            h5py.File(raw_path, "r") as raw,
-            h5py.File(processed_path, "r") as processed,
-        ):
-            available_times = require_time_alignment(raw)
+        with h5py.File(processed_path, "r") as processed:
+            available_times, processed_error_times = require_processed_case(
+                processed,
+                mode=mode,
+                wavelength_m=wavelength_m,
+            )
             times, source_indices = select_true_times(
                 available_times,
                 start=start_ip,
@@ -346,22 +359,10 @@ def compute_archive(
             elif not np.array_equal(times, selected_times):
                 raise ValueError("Movie modes selected different field times.")
 
-            amplitude = scalar(raw["P_phi/initial_condition/amplitude"])
+            amplitude = scalar(processed["P_phi/initial_condition/amplitude"])
             if amplitude <= 0.0:
                 raise ValueError("Initial modal amplitude must be positive.")
 
-            processed_error_times = (
-                np.asarray(processed["error_time_periods"]).squeeze().astype(float)
-            )
-            if processed_error_times.shape != available_times.shape or not np.allclose(
-                processed_error_times,
-                available_times,
-                rtol=0.0,
-                atol=1.0e-12,
-            ):
-                raise ValueError(
-                    f"Raw and processed NRE times differ for vertical mode n={mode}."
-                )
             nre_curves = np.stack(
                 [
                     np.asarray(processed[name]).squeeze().astype(float)
@@ -369,56 +370,39 @@ def compute_archive(
                 ],
                 axis=0,
             )
-            if nre_curves.shape != (len(NRE_MODEL_NAMES), available_times.size):
+            if nre_curves.shape != (
+                len(NRE_MODEL_NAMES),
+                processed_error_times.size,
+            ):
                 raise ValueError(f"Unexpected NRE array shape for n={mode}.")
             if not np.all(np.isfinite(nre_curves)) or np.any(nre_curves < 0.0):
                 raise ValueError(f"Invalid NRE values for n={mode}.")
 
             fields_at_times: list[np.ndarray] = []
-            max_field_difference = np.zeros(len(MODEL_NAMES), dtype=float)
             max_nre_difference = np.zeros(len(NRE_MODEL_NAMES), dtype=float)
 
-            for target_time, raw_index in zip(
+            for target_time, source_index in zip(
                 times,
                 source_indices,
                 strict=True,
             ):
-                component_up = complex_slice(raw["pse_A_up"], int(raw_index))
-                stored_conjugate_down = complex_slice(
-                    raw["pse_conj_A_dn"],
-                    int(raw_index),
-                )
-                # Selected times are integer inertial periods, so the carrier
-                # phase factors are exactly unity.
-                pse_velocity = component_up + np.conj(stored_conjugate_down)
-                raw_velocities = (
-                    complex_slice(raw["ybj_LA"], int(raw_index)),
-                    complex_slice(raw["tsb_LA"], int(raw_index)),
-                    complex_slice(raw["ybjplus_LplusA"], int(raw_index)),
-                    pse_velocity,
-                    complex_slice(raw["hbe_uiv"], int(raw_index)),
-                )
-
-                processed_index = processed_time_index(processed, float(target_time))
                 processed_velocities = tuple(
-                    complex_slice(processed[name], processed_index)
+                    complex_slice(processed[name], int(source_index))
                     for name in PROCESSED_MODEL_DATASETS
                 )
-                for model_index, (raw_value, reference_value) in enumerate(
-                    zip(raw_velocities, processed_velocities, strict=True)
+                error_index = exact_time_index(
+                    processed_error_times,
+                    float(target_time),
+                )
+                hbes = processed_velocities[-1]
+                for model_index, model_velocity in enumerate(
+                    processed_velocities[:-1]
                 ):
-                    max_field_difference[model_index] = max(
-                        max_field_difference[model_index],
-                        float(np.max(np.abs(raw_value - reference_value))),
-                    )
-
-                hbes = raw_velocities[-1]
-                for model_index, model_velocity in enumerate(raw_velocities[:-1]):
                     recomputed_nre = normalized_root_mean_square_error(
                         hbes,
                         model_velocity,
                     )
-                    stored_nre = float(nre_curves[model_index, raw_index])
+                    stored_nre = float(nre_curves[model_index, error_index])
                     max_nre_difference[model_index] = max(
                         max_nre_difference[model_index],
                         abs(recomputed_nre - stored_nre),
@@ -428,7 +412,7 @@ def compute_archive(
                     np.stack(
                         [
                             np.abs(velocity) ** 2 / amplitude**2
-                            for velocity in raw_velocities
+                            for velocity in processed_velocities
                         ],
                         axis=0,
                     )
@@ -437,14 +421,9 @@ def compute_archive(
             fields = np.stack(fields_at_times, axis=0)
             if not np.all(np.isfinite(fields)) or np.any(fields < 0.0):
                 raise ValueError(f"Invalid normalized field values for n={mode}.")
-            if np.max(max_field_difference) > 1.0e-10:
-                raise ValueError(
-                    f"Raw/processed field mismatch for n={mode}: "
-                    f"{np.max(max_field_difference):.3e}."
-                )
             if np.max(max_nre_difference) > 1.0e-12:
                 raise ValueError(
-                    f"Raw/processed NRE mismatch for n={mode}: "
+                    f"Saved-field/stored NRE mismatch for n={mode}: "
                     f"{np.max(max_nre_difference):.3e}."
                 )
 
@@ -453,20 +432,20 @@ def compute_archive(
             mode_nre_times.append(processed_error_times)
             selected_source_indices.append(source_indices)
             normalization_amplitudes.append(amplitude)
-            field_reference_differences.append(max_field_difference)
-            nre_reference_differences.append(max_nre_difference)
-            raw_sources.append(str(raw_path))
+            recomputed_nre_differences.append(max_nre_difference)
             processed_sources.append(str(processed_path))
-            raw_hashes.append(sha256_file(raw_path))
             processed_hashes.append(sha256_file(processed_path))
             mode_metadata.append(
                 {
                     "vertical_mode": mode,
                     "vertical_wavelength_m": wavelength_m,
-                    "raw_time_count": int(available_times.size),
-                    "raw_time_step_ip": float(
+                    "field_time_count": int(available_times.size),
+                    "field_time_step_ip": float(
                         np.median(np.diff(available_times))
                     ),
+                    "nre_time_count": int(processed_error_times.size),
+                    "grid_points_per_dimension": GRID_POINTS,
+                    "time_steps_per_inertial_period": STEPS_PER_INERTIAL_PERIOD,
                     "selected_time_count": int(times.size),
                     "normalization_amplitude": amplitude,
                 }
@@ -517,11 +496,19 @@ def compute_archive(
     grid_size = field_array.shape[-1]
     coordinate = np.linspace(-np.pi, np.pi, grid_size, endpoint=False)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "product": "supplementary movie 2",
         "background_flow": "sinusoidal dipole",
         "background_velocity_m_s": BACKGROUND_SPEED,
         "domain_depth_m": DOMAIN_DEPTH_M,
+        "source_kind": "processed full complex-velocity fields",
+        "spatial_discretisation": {
+            "grid_points": [GRID_POINTS, GRID_POINTS],
+        },
+        "time_discretisation": {
+            "parameter": "fc",
+            "steps_per_inertial_period": STEPS_PER_INERTIAL_PERIOD,
+        },
         "model_order": list(MODEL_NAMES),
         "nre_model_order": list(NRE_MODEL_NAMES),
         "vertical_modes": [mode for mode, _ in VERTICAL_MODES],
@@ -534,12 +521,8 @@ def compute_archive(
             r"\\left[\\int|\\phi_M-\\phi_{\\mathrm{HBEs}}|^2/"
             r"\\int|\\phi_{\\mathrm{HBEs}}|^2\\right]^{1/2}"
         ),
-        "pse_reconstruction": (
-            "pse_velocity = A_up + conj(stored_conj_A_dn)"
-        ),
-        "pse_reconstruction_note": (
-            "The selected field times are integer inertial periods, at which "
-            "the carrier phase factors are unity."
+        "pse_field_source": (
+            "spin_uiv_full: saved physical complex velocity from the PSE run"
         ),
         "orientation": {
             "hdf5_slice_transform": "transpose",
@@ -558,9 +541,8 @@ def compute_archive(
         },
         "color_limits": {
             "absolute_strategy": (
-                "Fixed mode-specific limits: n=4 and n=32 reproduce Figure 10; "
-                "n=16 uses [0.50, 1.50], centred on the unperturbed value one "
-                "and covering all but the most intense upper tail."
+                "Fixed mode-specific limits reproduce the n=4, n=16 and n=32 "
+                "row colour limits in the 128-by-128 Figure 10."
             ),
             "difference_strategy": (
                 f"Symmetric full-movie {difference_quantile:g} quantile of "
@@ -570,16 +552,15 @@ def compute_archive(
             "clipping": clipping,
         },
         "validation": {
-            "raw_processed_field_tolerance": 1.0e-10,
-            "raw_processed_nre_tolerance": 1.0e-12,
-            "all_selected_times_compared": True,
+            "processed_parameter_checks": True,
+            "recomputed_stored_nre_tolerance": 1.0e-12,
+            "all_selected_times_recomputed": True,
             "includes_10_ip": bool(np.any(np.isclose(selected_times, 10.0))),
             "includes_50_ip": bool(np.any(np.isclose(selected_times, 50.0))),
         },
         "modes": mode_metadata,
         "source_sha256": {
-            "raw": raw_hashes,
-            "processed_reference": processed_hashes,
+            "processed_full_fields": processed_hashes,
         },
     }
 
@@ -607,16 +588,11 @@ def compute_archive(
         ),
         "absolute_color_limits": absolute_limits,
         "difference_color_limits": difference_limit_array,
-        "reference_max_abs_complex_difference": np.stack(
-            field_reference_differences,
+        "recomputed_nre_max_abs_difference": np.stack(
+            recomputed_nre_differences,
             axis=0,
         ),
-        "reference_max_abs_nre_difference": np.stack(
-            nre_reference_differences,
-            axis=0,
-        ),
-        "raw_source_files": np.asarray(raw_sources),
-        "processed_reference_files": np.asarray(processed_sources),
+        "processed_source_files": np.asarray(processed_sources),
         "metadata_json": np.asarray(json.dumps(metadata, indent=2, sort_keys=True)),
     }
 
@@ -637,12 +613,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory containing exactly one *_index.csv file.",
     )
-    parser.add_argument(
-        "--raw-data-root",
-        type=Path,
-        required=True,
-        help="Directory containing raw case folders with PSE components.",
-    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--start-ip", type=float, default=0.0)
     parser.add_argument("--stop-ip", type=float, default=50.0)
@@ -655,13 +625,9 @@ def main() -> None:
     """Compute and atomically save the intermediate movie archive."""
     args = parse_args()
     index_path = resolve_index(args.index, args.data_root)
-    raw_data_root = args.raw_data_root.resolve()
-    if not raw_data_root.is_dir():
-        raise FileNotFoundError(f"Raw data root does not exist: {raw_data_root}")
 
     archive = compute_archive(
         index_path,
-        raw_data_root,
         start_ip=args.start_ip,
         stop_ip=args.stop_ip,
         sample_interval_ip=args.sample_interval_ip,

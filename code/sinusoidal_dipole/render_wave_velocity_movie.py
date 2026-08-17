@@ -1043,6 +1043,12 @@ def write_auxiliary_files(
 ) -> None:
     """Write the caption, accessibility text, notes, and local README."""
     metadata = data["metadata"]
+    spatial = metadata["spatial_discretisation"]
+    time_discretisation = metadata["time_discretisation"]
+    grid_points = spatial["grid_points"]
+    steps_per_ip = int(time_discretisation["steps_per_inertial_period"])
+    grid_label = f"{int(grid_points[0])}x{int(grid_points[1])}"
+    grid_tex = f"{int(grid_points[0])}\\times{int(grid_points[1])}"
     probe = manifest["ffprobe"]
     stream = video_stream(probe)
     format_info = probe["format"]
@@ -1068,7 +1074,10 @@ def write_auxiliary_files(
         "inertial periods (IP). For the common depth "
         "$$H=4000\\,\\mathrm{m}$$, their respective vertical wavelengths are "
         "$$h=1000\\,\\mathrm{m}$$, $$h=250\\,\\mathrm{m}$$ and "
-        "$$h=125\\,\\mathrm{m}$$. The upper row is "
+        "$$h=125\\,\\mathrm{m}$$. "
+        f"All five models use the manuscript's $${grid_tex}$$ horizontal "
+        f"grid and {steps_per_ip} time steps per inertial period "
+        f"($$f_c={steps_per_ip}$$). The upper row is "
         "$$|\\phi|^2/|\\phi_{\\mathrm{amp}}|^2$$ in the model order YBJ, TSB, "
         "YBJ+, PSE and HBEs. The first four panels of the lower row are the "
         "named model minus HBEs, explicitly "
@@ -1103,6 +1112,8 @@ def write_auxiliary_files(
         "n=4, n=16 and n=32. Each "
         "chapter title also gives the corresponding vertical wavelength: "
         "1000 m, 250 m and 125 m, respectively, for the common 4000-m depth. "
+        f"The displayed fields are the manuscript's {grid_label}, fc="
+        f"{steps_per_ip} results ({steps_per_ip} time steps per inertial period). "
         "The NRE vertical axis spans 0 to 40% for n=4 and 0 to 10% for n=16 "
         "and n=32; each range stays fixed throughout its chapter. "
         "Each "
@@ -1164,6 +1175,12 @@ def write_auxiliary_files(
         f"File size: {size_bytes} bytes ({size_bytes / 1_000_000:.3f} MB)\n"
         f"Audio streams: {len(audio_streams)} (the movie is silent)\n"
         f"Fast start: {'yes' if manifest['faststart'] else 'no'}\n\n"
+        "Simulation data\n"
+        f"- Horizontal grid: {grid_label}\n"
+        f"- Time stepping: fc={steps_per_ip} ({steps_per_ip} steps per "
+        "inertial period)\n"
+        "- Source: processed full complex-velocity fields used for Figures "
+        "9--10\n\n"
         "JFM/Cambridge checks\n"
         "- MP4 container: passed\n"
         "- H.264 video codec: passed\n"
@@ -1226,7 +1243,8 @@ def write_auxiliary_files(
         "curve panel shows instantaneous NRE, distinct from "
         "the time-averaged NRE in manuscript figure 8. Its y-axis is fixed at "
         "0--40% for n=4 and 0--10% for n=16 and n=32. The 51 physical states "
-        "in each chapter are true saved integer-period outputs from 0 to 50 IP. "
+        f"in each chapter are true saved {grid_label}, fc={steps_per_ip} "
+        "integer-period outputs from 0 to 50 IP. "
         "Video-frame "
         f"holding controls playback speed; each terminal state is held for an "
         f"additional {chapter_end_seconds:g} seconds, and no field "
@@ -1471,6 +1489,16 @@ def main() -> None:
             "chapter_end_frames": chapter_end_frames,
             "chapter_end_seconds": args.chapter_end_seconds,
             "vertical_modes": modes.tolist(),
+            "source_data": {
+                "kind": data["metadata"]["source_kind"],
+                "spatial_discretisation": data["metadata"][
+                    "spatial_discretisation"
+                ],
+                "time_discretisation": data["metadata"][
+                    "time_discretisation"
+                ],
+                "pse_field_source": data["metadata"]["pse_field_source"],
+            },
             "selected_crf": selected_crf,
             "encoder": "libx264",
             "pixel_format": stream.get("pix_fmt"),

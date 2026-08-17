@@ -24,33 +24,35 @@ from render_wave_velocity_movie import (
 MODEL_NAMES = ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]
 NRE_MODEL_NAMES = MODEL_NAMES[:4]
 EXPECTED_VERTICAL_MODES = np.asarray([4, 16, 32])
+EXPECTED_GRID_POINTS = 128
+EXPECTED_STEPS_PER_INERTIAL_PERIOD = 64
 EXPECTED_T50_MAXIMA = np.asarray(
     [
         [
-            31.786428361858587,
-            37.32062604847504,
-            37.239008041643494,
-            37.54282297563831,
-            27.56445542781792,
+            31.78305252674567,
+            38.59693198569784,
+            37.10110161741679,
+            37.56090526692235,
+            27.573750991669126,
         ],
         [
-            1.6125659389777067,
-            1.6123885329555694,
-            1.6123861068367464,
-            1.6135188620971153,
-            1.6784137820082063,
+            1.6165713245440108,
+            1.6141988368892222,
+            1.6145232022840763,
+            1.6164613339815284,
+            1.6794963091594228,
         ],
         [
-            1.1200476980737526,
-            1.1200508886292768,
-            1.1200508180212077,
-            1.189362150464363,
-            1.1880821730307622,
+            1.1192561550932818,
+            1.119246472578306,
+            1.1192467248495304,
+            1.1191323896066654,
+            1.1288687266184072,
         ],
     ]
 )
 EXPECTED_ABSOLUTE_LIMITS = np.asarray(
-    [[0.01, 10.0], [0.50, 1.50], [0.88, 1.12]]
+    [[0.01, 10.0], [0.39, 1.61], [0.88, 1.12]]
 )
 EXPECTED_STYLE_ALIGNMENT = {
     "manuscript_figures": [8, 9, 10],
@@ -176,10 +178,8 @@ def check_archive(path: Path) -> dict[str, Any]:
         "normalization_amplitude",
         "absolute_color_limits",
         "difference_color_limits",
-        "reference_max_abs_complex_difference",
-        "reference_max_abs_nre_difference",
-        "raw_source_files",
-        "processed_reference_files",
+        "recomputed_nre_max_abs_difference",
+        "processed_source_files",
         "metadata_json",
     }
     with np.load(path) as archive:
@@ -199,8 +199,7 @@ def check_archive(path: Path) -> dict[str, Any]:
         amplitudes = archive["normalization_amplitude"]
         absolute_limits = archive["absolute_color_limits"]
         difference_limits = archive["difference_color_limits"]
-        field_differences = archive["reference_max_abs_complex_difference"]
-        nre_differences = archive["reference_max_abs_nre_difference"]
+        nre_differences = archive["recomputed_nre_max_abs_difference"]
         metadata = json.loads(str(archive["metadata_json"].item()))
 
         if not np.array_equal(times, np.arange(51.0)):
@@ -209,11 +208,17 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("Movie vertical-mode order changed.")
         if model_names != MODEL_NAMES or nre_names != NRE_MODEL_NAMES:
             raise ValueError("Movie model order changed.")
-        if fields.shape != (3, 51, 5, 64, 64):
+        if fields.shape != (
+            3,
+            51,
+            5,
+            EXPECTED_GRID_POINTS,
+            EXPECTED_GRID_POINTS,
+        ):
             raise ValueError(f"Unexpected movie field shape: {fields.shape}.")
         if source_indices.shape != (3, 51):
             raise ValueError("Unexpected source-time index shape.")
-        expected_indices = np.arange(0, 3201, 64)
+        expected_indices = np.arange(51)
         if not all(
             np.array_equal(indices, expected_indices)
             for indices in source_indices
@@ -227,7 +232,12 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("NRE time coordinates are not strictly increasing.")
         if not np.all(np.isfinite(nre)) or np.any(nre < 0.0):
             raise ValueError("NRE curves contain invalid values.")
-        expected_coordinate = np.linspace(-np.pi, np.pi, 64, endpoint=False)
+        expected_coordinate = np.linspace(
+            -np.pi,
+            np.pi,
+            EXPECTED_GRID_POINTS,
+            endpoint=False,
+        )
         if not np.array_equal(x, expected_coordinate) or not np.array_equal(
             y,
             expected_coordinate,
@@ -249,8 +259,6 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("Difference color limits are not exactly symmetric.")
         if np.any(difference_limits[:, 1] <= 0.0):
             raise ValueError("Difference color limits are not positive.")
-        if np.max(field_differences) > 1.0e-10:
-            raise ValueError("Raw PSE/model fields disagree with processed references.")
         if np.max(nre_differences) > 1.0e-12:
             raise ValueError("Recomputed NRE values disagree with stored error data.")
         time_50 = int(np.flatnonzero(np.isclose(times, 50.0))[0])
@@ -268,10 +276,21 @@ def check_archive(path: Path) -> dict[str, Any]:
             if not np.any(np.isclose(times, target, rtol=0.0, atol=1.0e-12)):
                 raise ValueError(f"Required {target:g}-IP validation frame is absent.")
 
-    if metadata["pse_reconstruction"] != (
-        "pse_velocity = A_up + conj(stored_conj_A_dn)"
+    if metadata["source_kind"] != "processed full complex-velocity fields":
+        raise ValueError("Movie source-kind metadata changed.")
+    if metadata["spatial_discretisation"] != {
+        "grid_points": [EXPECTED_GRID_POINTS, EXPECTED_GRID_POINTS],
+    }:
+        raise ValueError("Movie spatial-discretisation metadata changed.")
+    if metadata["time_discretisation"] != {
+        "parameter": "fc",
+        "steps_per_inertial_period": EXPECTED_STEPS_PER_INERTIAL_PERIOD,
+    }:
+        raise ValueError("Movie time-discretisation metadata changed.")
+    if metadata["pse_field_source"] != (
+        "spin_uiv_full: saved physical complex velocity from the PSE run"
     ):
-        raise ValueError("PSE reconstruction metadata changed.")
+        raise ValueError("PSE field-source metadata changed.")
     if metadata["orientation"] != {
         "extent": [-np.pi, np.pi, -np.pi, np.pi],
         "hdf5_slice_transform": "transpose",
@@ -284,9 +303,10 @@ def check_archive(path: Path) -> dict[str, Any]:
     return {
         "field_shape": list(fields.shape),
         "times_ip": [float(times[0]), float(times[-1])],
-        "source_time_step": 64,
+        "source_time_step": 1,
+        "spatial_discretisation": metadata["spatial_discretisation"],
+        "time_discretisation": metadata["time_discretisation"],
         "model_order": model_names,
-        "max_raw_processed_field_difference": float(np.max(field_differences)),
         "max_recomputed_stored_nre_difference": float(np.max(nre_differences)),
         "t50_maxima_by_mode": {
             str(int(mode)): values.tolist()
@@ -295,7 +315,7 @@ def check_archive(path: Path) -> dict[str, Any]:
         "absolute_color_limits": absolute_limits.tolist(),
         "difference_color_limits": difference_limits.tolist(),
         "clipping": metadata["color_limits"]["clipping"],
-        "pse_reconstruction": metadata["pse_reconstruction"],
+        "pse_field_source": metadata["pse_field_source"],
     }
 
 
@@ -419,6 +439,12 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
             raise ValueError(f"Caption is missing required term {term!r}.")
     if "0 to 50" not in caption or "does not interpolate" not in caption:
         raise ValueError("Caption does not document time coverage and sampling.")
+    if (
+        "128\\times128" not in caption
+        or "f_c=64" not in caption
+        or "64 time steps per inertial period" not in caption
+    ):
+        raise ValueError("Caption does not document the 128x128, fc=64 data.")
     if "additional 36 frames (1.5 s)" not in caption:
         raise ValueError("Caption does not document the chapter-end still holds.")
     for wavelength in (1000, 250, 125):
@@ -467,6 +493,8 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         raise ValueError("Accessibility description lacks non-colour guidance.")
     if "ScholarOne file designation: Movie" not in submission:
         raise ValueError("Submission notes do not specify the Movie designation.")
+    if "Horizontal grid: 128x128" not in submission or "fc=64" not in submission:
+        raise ValueError("Submission notes omit the simulation discretisation.")
     if JFM_PREPARING_URL not in submission or JFM_SUBMITTING_URL not in submission:
         raise ValueError("Submission notes omit official JFM links.")
     if "supplementary movie 2" not in reference.lower():
@@ -485,6 +513,7 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         "local_absolute_paths_absent": True,
         "ambiguous_uppercase_delta_absent": True,
         "instantaneous_nre_distinguished": True,
+        "simulation_discretisation_documented": True,
         "two_page_opening_documented": True,
     }
 
@@ -593,6 +622,20 @@ def check_render_outputs(
         raise ValueError("Render manifest product label changed.")
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
+    if manifest.get("source_data") != {
+        "kind": "processed full complex-velocity fields",
+        "spatial_discretisation": {
+            "grid_points": [EXPECTED_GRID_POINTS, EXPECTED_GRID_POINTS],
+        },
+        "time_discretisation": {
+            "parameter": "fc",
+            "steps_per_inertial_period": EXPECTED_STEPS_PER_INERTIAL_PERIOD,
+        },
+        "pse_field_source": (
+            "spin_uiv_full: saved physical complex velocity from the PSE run"
+        ),
+    }:
+        raise ValueError("Render manifest source-data metadata changed.")
     style_alignment = manifest.get("style_alignment", {})
     if style_alignment != EXPECTED_STYLE_ALIGNMENT:
         raise ValueError(
