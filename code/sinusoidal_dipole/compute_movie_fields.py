@@ -32,7 +32,7 @@ MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
 NRE_MODEL_NAMES = MODEL_NAMES[:4]
 VERTICAL_MODES = ((4, 1000.0), (16, 250.0), (32, 125.0))
 BACKGROUND_SPEED = 0.25
-DOMAIN_DEPTH_M = 4000.0
+DOMAIN_DEPTH_M = 2000.0
 GRID_POINTS = 128
 STEPS_PER_INERTIAL_PERIOD = 64
 PROCESSED_MODEL_DATASETS = (
@@ -501,6 +501,7 @@ def compute_archive(
         "background_flow": "sinusoidal dipole",
         "background_velocity_m_s": BACKGROUND_SPEED,
         "domain_depth_m": DOMAIN_DEPTH_M,
+        "vertical_wavelength_relation": "h=2H/n",
         "source_kind": "processed full complex-velocity fields",
         "spatial_discretisation": {
             "grid_points": [GRID_POINTS, GRID_POINTS],

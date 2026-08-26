@@ -37,6 +37,7 @@ DEFAULT_INPUT = (
 )
 MAX_FILE_BYTES = 10_000_000
 EXPECTED_VERTICAL_MODES = (4, 16, 32)
+DOMAIN_DEPTH_METRES = 2000
 PREFERRED_TEXT_FONT = "Times New Roman"
 MOVIE_FONT_STACK = (
     PREFERRED_TEXT_FONT,
@@ -125,6 +126,7 @@ def load_movie_data(path: Path) -> dict[str, Any]:
     required = {
         "times_in_inertial_periods",
         "vertical_modes",
+        "vertical_wavelengths_m",
         "model_names",
         "nre_model_names",
         "normalized_squared_velocity",
@@ -147,12 +149,23 @@ def load_movie_data(path: Path) -> dict[str, Any]:
 
     times = result["times_in_inertial_periods"]
     modes = result["vertical_modes"]
+    wavelengths = result["vertical_wavelengths_m"]
     model_names = list(result["model_names"])
     fields = result["normalized_squared_velocity"]
     if tuple(int(mode) for mode in modes) != EXPECTED_VERTICAL_MODES:
         raise ValueError(
             "Movie archive must contain vertical modes n=4, n=16 and n=32."
         )
+    if not np.array_equal(
+        wavelengths,
+        np.asarray(list(VERTICAL_WAVELENGTH_METRES.values()), dtype=float),
+    ):
+        raise ValueError("Movie vertical wavelengths changed.")
+    metadata = result["metadata"]
+    if float(metadata.get("domain_depth_m", math.nan)) != DOMAIN_DEPTH_METRES:
+        raise ValueError("Movie archive must use H=2 km.")
+    if metadata.get("vertical_wavelength_relation") != "h=2H/n":
+        raise ValueError("Movie archive must use h=2H/n.")
     if model_names != ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]:
         raise ValueError("Movie model order changed.")
     if fields.shape[:3] != (modes.size, times.size, len(model_names)):
@@ -613,7 +626,7 @@ def render_title_frame(
         path,
         title=f"Chapter {chapter}",
         subtitle=(
-            rf"Vertical mode $n={mode}$ (vertical wavelength "
+            rf"Vertical mode $n={mode}$ ($H=2\,\mathrm{{km}}$; vertical wavelength "
             rf"$h={wavelength_metres}\,\mathrm{{m}}$); "
             "0-50 inertial periods"
         ),
@@ -1072,7 +1085,8 @@ def write_auxiliary_files(
         "The three sequential chapters "
         "show vertical modes $$n=4$$, $$n=16$$ and $$n=32$$ from 0 to 50 "
         "inertial periods (IP). For the common depth "
-        "$$H=4000\\,\\mathrm{m}$$, their respective vertical wavelengths are "
+        "$$H=2\\,\\mathrm{km}$$ and $$h=2H/n$$, their respective vertical "
+        "wavelengths are "
         "$$h=1000\\,\\mathrm{m}$$, $$h=250\\,\\mathrm{m}$$ and "
         "$$h=125\\,\\mathrm{m}$$. "
         f"All five models use the manuscript's $${grid_tex}$$ horizontal "
@@ -1111,7 +1125,8 @@ def write_auxiliary_files(
         "movie has three chapters, in the order "
         "n=4, n=16 and n=32. Each "
         "chapter title also gives the corresponding vertical wavelength: "
-        "1000 m, 250 m and 125 m, respectively, for the common 4000-m depth. "
+        "1000 m, 250 m and 125 m, respectively, for the common 2-km depth, "
+        "using h=2H/n. "
         f"The displayed fields are the manuscript's {grid_label}, fc="
         f"{steps_per_ip} results ({steps_per_ip} time steps per inertial period). "
         "The NRE vertical axis spans 0 to 40% for n=4 and 0 to 10% for n=16 "
@@ -1235,8 +1250,9 @@ def write_auxiliary_files(
         "- `movie2_render_manifest.json`: frame timing, fixed scales and encoder "
         "metadata.\n"
         "- `movie2_quality_report.json`: numerical, media and visual-QC results.\n\n"
-        "The three chapters show n=4, n=16 and n=32, with the manuscript "
-        "vertical wavelengths 1000 m, 250 m and 125 m, "
+        "The three chapters show n=4, n=16 and n=32 at H=2 km, with the "
+        "manuscript relation h=2H/n and unchanged vertical wavelengths "
+        "1000 m, 250 m and 125 m, "
         f"respectively. The movie opens with a {opening_seconds:g}-second "
         f"overall title page followed by a {title_seconds:g}-second Chapter 1 "
         "page; the later Chapter pages use the same longer duration. The "
@@ -1491,6 +1507,10 @@ def main() -> None:
             "vertical_modes": modes.tolist(),
             "source_data": {
                 "kind": data["metadata"]["source_kind"],
+                "domain_depth_m": data["metadata"]["domain_depth_m"],
+                "vertical_wavelength_relation": data["metadata"][
+                    "vertical_wavelength_relation"
+                ],
                 "spatial_discretisation": data["metadata"][
                     "spatial_discretisation"
                 ],
@@ -1532,6 +1552,8 @@ def main() -> None:
             ].tolist(),
             "style_alignment": {
                 "manuscript_figures": [8, 9, 10],
+                "domain_depth_metres": DOMAIN_DEPTH_METRES,
+                "vertical_wavelength_relation": "h=2H/n",
                 "preferred_text_font": PREFERRED_TEXT_FONT,
                 "font_stack": list(MOVIE_FONT_STACK),
                 "mathtext_fontset": "stix",
@@ -1579,7 +1601,7 @@ def main() -> None:
                     ),
                     "chapter_title_pattern": "Chapter {chapter}",
                     "chapter_subtitle_pattern": (
-                        "Vertical mode n={mode} (vertical wavelength "
+                        "Vertical mode n={mode} (H=2 km; vertical wavelength "
                         "h={wavelength} m); 0-50 inertial periods"
                     ),
                 },

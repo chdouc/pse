@@ -10,6 +10,8 @@
     "horizontal_grid": [128, 128],
     "time_steps_per_inertial_period": 64,
     "time_step_parameter": "fc",
+    "domain_depth_m": 2000,
+    "vertical_wavelength_relation": "h=2H/n",
     "vertical_modes": [4, 16, 32],
     "vertical_wavelengths_m": [1000, 250, 125],
     "times_in_inertial_periods": [0.0, 50.0],
@@ -53,7 +55,7 @@
         "opening_title": "Supplementary movie 2",
         "opening_subtitle": "Wave-field evolution in a sinusoidal-dipole background flow",
         "chapter_title_pattern": "Chapter {chapter}",
-        "chapter_subtitle_pattern": "Vertical mode n={mode} (vertical wavelength h={wavelength} m); 0-50 inertial periods"
+        "chapter_subtitle_pattern": "Vertical mode n={mode} (H=2 km; vertical wavelength h={wavelength} m); 0-50 inertial periods"
       }
     }
   },

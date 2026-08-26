@@ -24,6 +24,8 @@ from render_wave_velocity_movie import (
 MODEL_NAMES = ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]
 NRE_MODEL_NAMES = MODEL_NAMES[:4]
 EXPECTED_VERTICAL_MODES = np.asarray([4, 16, 32])
+EXPECTED_DOMAIN_DEPTH_METRES = 2000.0
+EXPECTED_VERTICAL_WAVELENGTHS_METRES = np.asarray([1000.0, 250.0, 125.0])
 EXPECTED_GRID_POINTS = 128
 EXPECTED_STEPS_PER_INERTIAL_PERIOD = 64
 EXPECTED_T50_MAXIMA = np.asarray(
@@ -56,6 +58,8 @@ EXPECTED_ABSOLUTE_LIMITS = np.asarray(
 )
 EXPECTED_STYLE_ALIGNMENT = {
     "manuscript_figures": [8, 9, 10],
+    "domain_depth_metres": 2000,
+    "vertical_wavelength_relation": "h=2H/n",
     "preferred_text_font": "Times New Roman",
     "font_stack": [
         "Times New Roman",
@@ -104,7 +108,8 @@ EXPECTED_STYLE_ALIGNMENT = {
         ),
         "chapter_title_pattern": "Chapter {chapter}",
         "chapter_subtitle_pattern": (
-            "Vertical mode n={mode} (vertical wavelength h={wavelength} m); "
+            "Vertical mode n={mode} (H=2 km; vertical wavelength "
+            "h={wavelength} m); "
             "0-50 inertial periods"
         ),
     },
@@ -168,6 +173,7 @@ def check_archive(path: Path) -> dict[str, Any]:
         "times_in_inertial_periods",
         "source_time_indices",
         "vertical_modes",
+        "vertical_wavelengths_m",
         "model_names",
         "nre_model_names",
         "normalized_squared_velocity",
@@ -189,6 +195,7 @@ def check_archive(path: Path) -> dict[str, Any]:
         times = archive["times_in_inertial_periods"]
         source_indices = archive["source_time_indices"]
         modes = archive["vertical_modes"]
+        wavelengths = archive["vertical_wavelengths_m"]
         model_names = list(archive["model_names"])
         nre_names = list(archive["nre_model_names"])
         fields = archive["normalized_squared_velocity"]
@@ -206,6 +213,8 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("Movie fields must contain every integer time from 0--50 IP.")
         if not np.array_equal(modes, EXPECTED_VERTICAL_MODES):
             raise ValueError("Movie vertical-mode order changed.")
+        if not np.array_equal(wavelengths, EXPECTED_VERTICAL_WAVELENGTHS_METRES):
+            raise ValueError("Movie vertical wavelengths changed.")
         if model_names != MODEL_NAMES or nre_names != NRE_MODEL_NAMES:
             raise ValueError("Movie model order changed.")
         if fields.shape != (
@@ -278,6 +287,15 @@ def check_archive(path: Path) -> dict[str, Any]:
 
     if metadata["source_kind"] != "processed full complex-velocity fields":
         raise ValueError("Movie source-kind metadata changed.")
+    if not np.isclose(
+        float(metadata.get("domain_depth_m", np.nan)),
+        EXPECTED_DOMAIN_DEPTH_METRES,
+        rtol=0.0,
+        atol=0.0,
+    ):
+        raise ValueError("Movie domain depth is not H=2 km.")
+    if metadata.get("vertical_wavelength_relation") != "h=2H/n":
+        raise ValueError("Movie vertical-wavelength relation is not h=2H/n.")
     if metadata["spatial_discretisation"] != {
         "grid_points": [EXPECTED_GRID_POINTS, EXPECTED_GRID_POINTS],
     }:
@@ -302,6 +320,9 @@ def check_archive(path: Path) -> dict[str, Any]:
 
     return {
         "field_shape": list(fields.shape),
+        "domain_depth_m": EXPECTED_DOMAIN_DEPTH_METRES,
+        "vertical_wavelength_relation": "h=2H/n",
+        "vertical_wavelengths_m": wavelengths.tolist(),
         "times_ip": [float(times[0]), float(times[-1])],
         "source_time_step": 1,
         "spatial_discretisation": metadata["spatial_discretisation"],
@@ -452,6 +473,8 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
             raise ValueError(
                 f"Caption is missing the h={wavelength} m vertical wavelength."
             )
+    if "H=2\\,\\mathrm{km}" not in caption or "h=2H/n" not in caption:
+        raise ValueError("Caption does not document H=2 km and h=2H/n.")
     if (
         "NRE vertical axis spans 0--40%" not in caption
         or "0--10%" not in caption
@@ -500,6 +523,8 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
     if "supplementary movie 2" not in reference.lower():
         raise ValueError("Suggested manuscript reference does not name movie 2.")
     combined = "\n".join((caption, accessibility, submission, reference, readme))
+    if "4000-m depth" in combined or "H=4000" in combined:
+        raise ValueError("Obsolete H=4 km wording appears in public-facing text.")
     if "\\Delta" in combined or "Δ" in combined:
         raise ValueError(
             "An ambiguous uppercase delta symbol appears in public-facing text."
@@ -514,6 +539,8 @@ def check_text_outputs(output_directory: Path) -> dict[str, Any]:
         "ambiguous_uppercase_delta_absent": True,
         "instantaneous_nre_distinguished": True,
         "simulation_discretisation_documented": True,
+        "domain_depth_2_km_documented": True,
+        "vertical_wavelengths_unchanged": True,
         "two_page_opening_documented": True,
     }
 
@@ -627,6 +654,8 @@ def check_render_outputs(
         raise ValueError("Render manifest reports physical-field interpolation.")
     if manifest.get("source_data") != {
         "kind": "processed full complex-velocity fields",
+        "domain_depth_m": EXPECTED_DOMAIN_DEPTH_METRES,
+        "vertical_wavelength_relation": "h=2H/n",
         "spatial_discretisation": {
             "grid_points": [EXPECTED_GRID_POINTS, EXPECTED_GRID_POINTS],
         },
