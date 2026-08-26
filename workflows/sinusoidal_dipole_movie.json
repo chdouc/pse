@@ -14,6 +14,11 @@
     "vertical_wavelength_relation": "h=2H/n",
     "vertical_modes": [4, 16, 32],
     "vertical_wavelengths_m": [1000, 250, 125],
+    "absolute_color_limits": {
+      "4": [0.01, 37.5],
+      "16": [0.39, 1.61],
+      "32": [0.88, 1.12]
+    },
     "times_in_inertial_periods": [0.0, 50.0],
     "physical_field_sample_interval_ip": 1.0,
     "physical_field_interpolation": false,

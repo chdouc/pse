@@ -213,8 +213,6 @@ def nice_nre_upper(value_percent: float) -> float:
 
 def colorbar_number(value: float, _: int) -> str:
     """Format compact colorbar tick labels."""
-    if abs(value) >= 10.0:
-        return f"{value:.0f}"
     if abs(value) >= 1.0:
         return f"{value:.2f}".rstrip("0").rstrip(".")
     return f"{value:.2f}"
@@ -1258,8 +1256,10 @@ def write_auxiliary_files(
         "page; the later Chapter pages use the same longer duration. The "
         "curve panel shows instantaneous NRE, distinct from "
         "the time-averaged NRE in manuscript figure 8. Its y-axis is fixed at "
-        "0--40% for n=4 and 0--10% for n=16 and n=32. The 51 physical states "
-        f"in each chapter are true saved {grid_label}, fc={steps_per_ip} "
+        "0--40% for n=4 and 0--10% for n=16 and n=32. "
+        "The n=4 absolute-field colour scale has a fixed upper limit of 37.5. "
+        f"The 51 physical states in each chapter are true saved {grid_label}, "
+        f"fc={steps_per_ip} "
         "integer-period outputs from 0 to 50 IP. "
         "Video-frame "
         f"holding controls playback speed; each terminal state is held for an "

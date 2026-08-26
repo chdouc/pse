@@ -56,10 +56,11 @@ NRE_DATASETS = (
     "err_complex_phi_spin_step",
 )
 
-# These ranges reproduce the row colour limits in the 128-by-128 Figure 10.
-# Clipping is counted over every model and time.
+# These fixed movie ranges use the requested 37.5 upper limit for n=4 and the
+# 128-by-128 Figure 10 row limits for n=16 and n=32. Clipping is counted over
+# every model and time.
 FIXED_ABSOLUTE_LIMITS = {
-    4: (0.01, 10.0),
+    4: (0.01, 37.5),
     16: (0.39, 1.61),
     32: (0.88, 1.12),
 }
@@ -542,8 +543,9 @@ def compute_archive(
         },
         "color_limits": {
             "absolute_strategy": (
-                "Fixed mode-specific limits reproduce the n=4, n=16 and n=32 "
-                "row colour limits in the 128-by-128 Figure 10."
+                "Fixed mode-specific movie limits use an n=4 upper limit of "
+                "37.5 and reproduce the n=16 and n=32 row colour limits in "
+                "the 128-by-128 Figure 10."
             ),
             "difference_strategy": (
                 f"Symmetric full-movie {difference_quantile:g} quantile of "

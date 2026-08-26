@@ -17,6 +17,7 @@ from render_wave_velocity_movie import (
     JFM_PREPARING_URL,
     JFM_SUBMITTING_URL,
     MAX_FILE_BYTES,
+    colorbar_number,
     resolve_executable,
 )
 
@@ -54,7 +55,7 @@ EXPECTED_T50_MAXIMA = np.asarray(
     ]
 )
 EXPECTED_ABSOLUTE_LIMITS = np.asarray(
-    [[0.01, 10.0], [0.39, 1.61], [0.88, 1.12]]
+    [[0.01, 37.5], [0.39, 1.61], [0.88, 1.12]]
 )
 EXPECTED_STYLE_ALIGNMENT = {
     "manuscript_figures": [8, 9, 10],
@@ -652,6 +653,13 @@ def check_render_outputs(
         raise ValueError("Render manifest product label changed.")
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
+    if not np.array_equal(
+        np.asarray(manifest.get("fixed_absolute_color_limits")),
+        EXPECTED_ABSOLUTE_LIMITS,
+    ):
+        raise ValueError("Render manifest does not use the required colour limits.")
+    if colorbar_number(37.5, 0) != "37.5":
+        raise ValueError("The n=4 colourbar upper label does not display 37.5.")
     if manifest.get("source_data") != {
         "kind": "processed full complex-velocity fields",
         "domain_depth_m": EXPECTED_DOMAIN_DEPTH_METRES,
@@ -817,6 +825,7 @@ def check_render_outputs(
         "segments_cover_all_frames": True,
         "scientific_time_order": "strictly increasing within each chapter",
         "fixed_color_limits": True,
+        "n4_absolute_colorbar_upper_label": "37.5",
         "style_alignment": style_alignment,
         "chapter_end_hold_seconds": chapter_end_seconds,
         "chapter_end_hold_frames_by_mode": chapter_end_holds,

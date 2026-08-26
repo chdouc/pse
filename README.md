@@ -224,6 +224,7 @@ Movie 2 holds each terminal case frame for an additional 1.5 seconds. Its
 typography, model colours and NRE legend order are aligned with
 manuscript figures 8--10; its chapter cards also give the common 2000-m depth
 and the corresponding unchanged vertical wavelengths from `h=2H/n`.
+The n=4 absolute-field colour scale has a fixed upper limit of 37.5.
 Difference colourbars use
 the explicit model-minus-HBEs normalised squared-velocity expression, and the
 curve panel is labelled as instantaneous NRE to distinguish it from the
