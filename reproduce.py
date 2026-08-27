@@ -1,0 +1,361 @@
+"""Unified entry point for the manuscript-resolution reproduction."""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import threading
+import time
+from typing import Any
+
+import psutil
+
+
+ROOT = Path(__file__).resolve().parent
+SOURCE = ROOT / "code" / "sinusoidal_dipole"
+sys.path.insert(0, str(SOURCE))
+
+from compute_error_statistics import compute_statistics  # noqa: E402
+from compute_movie_fields import compute_archive  # noqa: E402
+from compute_wave_velocity_fields import compute_fields  # noqa: E402
+from solver import create_simulation_file, load_config  # noqa: E402
+from validate_reproduction import validate_all, validate_smoke  # noqa: E402
+
+
+DEFAULT_CONFIG = ROOT / "config" / "reproduction.json"
+DEFAULT_OUTPUT = ROOT / "artifacts" / "reproduction"
+
+
+class PeakMemoryMonitor:
+    """Sample combined resident memory for the parent and solver workers."""
+
+    def __init__(self) -> None:
+        self.peak_bytes = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        process = psutil.Process()
+        while not self._stop.wait(0.25):
+            processes = [process, *process.children(recursive=True)]
+            total = 0
+            for child in processes:
+                try:
+                    total += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            self.peak_bytes = max(self.peak_bytes, total)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> int:
+        self._stop.set()
+        self._thread.join()
+        return self.peak_bytes
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def save_npz(path: Path, data: dict[str, Any]) -> None:
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **data)
+
+
+def run_command(arguments: list[str]) -> None:
+    print("running: " + " ".join(arguments), flush=True)
+    subprocess.run(arguments, cwd=ROOT, check=True)
+
+
+def dependency_versions() -> dict[str, str]:
+    names = (
+        "numpy",
+        "scipy",
+        "h5py",
+        "pandas",
+        "matplotlib",
+        "Pillow",
+        "imageio",
+        "imageio-ffmpeg",
+        "psutil",
+        "pytest",
+    )
+    return {name: importlib.metadata.version(name) for name in names}
+
+
+def write_manifest(
+    output_directory: Path,
+    *,
+    command: str,
+    started: float,
+    config_path: Path,
+    validation: dict[str, Any],
+    peak_combined_memory_bytes: int,
+) -> Path:
+    files = sorted(
+        path
+        for path in output_directory.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    )
+    manifest = {
+        "schema_version": 1,
+        "command": command,
+        "runtime_seconds": time.perf_counter() - started,
+        "peak_combined_resident_memory_bytes": peak_combined_memory_bytes,
+        "environment": {
+            "platform": platform.platform(),
+            "python": sys.version,
+            "python_executable": Path(sys.executable).name,
+            "logical_cpu_count": os.cpu_count(),
+            "dependencies": dependency_versions(),
+        },
+        "configuration": {
+            "file": str(config_path.relative_to(ROOT)),
+            "sha256": sha256_file(config_path),
+        },
+        "validation": validation,
+        "outputs": [
+            {
+                "path": str(path.relative_to(output_directory)).replace("\\", "/"),
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+            for path in files
+        ],
+    }
+    path = output_directory / "manifest.json"
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def saved_times(config: dict[str, Any]) -> dict[int, list[int]]:
+    figure_modes = set(config["vertical_modes"]["figures_9_10"])
+    movie_modes = set(config["vertical_modes"]["movie_2"])
+    figure_times = list(config["saved_times_in_inertial_periods"]["figures_9_10"])
+    movie = config["saved_times_in_inertial_periods"]
+    movie_times = list(
+        range(
+            int(movie["movie_2_start"]),
+            int(movie["movie_2_stop"]) + 1,
+            int(movie["movie_2_interval"]),
+        )
+    )
+    return {
+        mode: (
+            movie_times
+            if mode in movie_modes
+            else figure_times if mode in figure_modes else []
+        )
+        for mode in config["vertical_modes"]["error_statistics"]
+    }
+
+
+def reproduce_all(
+    config: dict[str, Any],
+    output_directory: Path,
+    *,
+    workers: int,
+    reuse_simulation: bool,
+) -> dict[str, Any]:
+    output_directory.mkdir(parents=True, exist_ok=True)
+    data_directory = output_directory / "data"
+    figure_directory = output_directory / "figures"
+    movie_directory = output_directory / "movies"
+    for directory in (data_directory, figure_directory, movie_directory):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    simulation_path = data_directory / "simulation.h5"
+    if reuse_simulation:
+        if not simulation_path.is_file():
+            raise FileNotFoundError(
+                "--reuse-simulation requires an existing data/simulation.h5."
+            )
+    else:
+        create_simulation_file(
+            simulation_path,
+            config,
+            config["vertical_modes"]["error_statistics"],
+            saved_times(config),
+            workers=workers,
+        )
+
+    error_path = data_directory / "sinusoidal_dipole_error_statistics.csv"
+    compute_statistics(simulation_path).to_csv(error_path, index=False)
+    wave_path = data_directory / "sinusoidal_dipole_wave_velocity_fields.npz"
+    save_npz(wave_path, compute_fields(simulation_path))
+    movie_fields_path = data_directory / "sinusoidal_dipole_movie_fields.npz"
+    save_npz(movie_fields_path, compute_archive(simulation_path))
+
+    validation = validate_all(
+        simulation_path,
+        error_path,
+        wave_path,
+        movie_fields_path,
+        config,
+    )
+
+    run_command(
+        [
+            sys.executable,
+            str(SOURCE / "plot_error_statistics.py"),
+            "--input",
+            str(error_path),
+            "--output",
+            str(figure_directory / "figure8_error_statistics"),
+        ]
+    )
+    run_command(
+        [
+            sys.executable,
+            str(SOURCE / "plot_wave_velocity_fields.py"),
+            "--input",
+            str(wave_path),
+            "--output-directory",
+            str(figure_directory),
+            "--no-tex",
+        ]
+    )
+    run_command(
+        [
+            sys.executable,
+            str(SOURCE / "render_wave_velocity_movie.py"),
+            "--input",
+            str(movie_fields_path),
+            "--output-directory",
+            str(movie_directory),
+        ]
+    )
+    run_command(
+        [
+            sys.executable,
+            str(SOURCE / "validate_wave_velocity_movie.py"),
+            "--input",
+            str(movie_fields_path),
+            "--output-directory",
+            str(movie_directory),
+        ]
+    )
+
+    movie_path = movie_directory / "movie2.mp4"
+    if not movie_path.is_file() or movie_path.stat().st_size == 0:
+        raise AssertionError("Movie 2 was not generated.")
+    validation["movie2_bytes"] = movie_path.stat().st_size
+    quality_path = movie_directory / "movie2_quality_report.json"
+    movie_quality = json.loads(quality_path.read_text(encoding="utf-8"))
+    if movie_quality.get("status") != "passed":
+        raise AssertionError("Movie 2 quality validation did not pass.")
+    validation["movie2_quality"] = {
+        "status": movie_quality["status"],
+        "media_checks": movie_quality["media_checks"],
+    }
+    report_path = output_directory / "validation.json"
+    report_path.write_text(
+        json.dumps(validation, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return validation
+
+
+def smoke_test(config: dict[str, Any], output_directory: Path) -> dict[str, Any]:
+    smoke = copy.deepcopy(config)
+    smoke["numerical_parameters"].update(
+        {
+            "horizontal_grid": 16,
+            "time_steps_per_inertial_period": 8,
+            "total_inertial_periods": 1,
+        }
+    )
+    modes = [1, 4, 8, 16, 32]
+    smoke_path = output_directory / "data" / "smoke_simulation.h5"
+    create_simulation_file(
+        smoke_path,
+        smoke,
+        modes,
+        {mode: [0, 1] for mode in modes},
+        workers=1,
+    )
+    validation = validate_smoke(smoke_path, smoke)
+    (output_directory / "validation.json").write_text(
+        json.dumps(validation, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    return validation
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--all", action="store_true")
+    action.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--output-directory", type=Path)
+    parser.add_argument("--workers", type=int, default=min(3, os.cpu_count() or 1))
+    parser.add_argument(
+        "--reuse-simulation",
+        action="store_true",
+        help=(
+            "Reuse an existing simulation.h5 and regenerate downstream products; "
+            "the default --all run always recomputes the simulation."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.workers < 1:
+        raise ValueError("--workers must be positive.")
+    if args.smoke_test and args.reuse_simulation:
+        raise ValueError("--reuse-simulation applies only to --all.")
+    config_path = args.config.resolve()
+    config = load_config(config_path)
+    output_directory = (
+        args.output_directory.resolve()
+        if args.output_directory
+        else DEFAULT_OUTPUT / ("smoke-test" if args.smoke_test else "full")
+    )
+    output_directory.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    memory_monitor = PeakMemoryMonitor()
+    memory_monitor.start()
+    command = " ".join([Path(sys.executable).name, Path(__file__).name, *sys.argv[1:]])
+    try:
+        if args.smoke_test:
+            validation = smoke_test(config, output_directory)
+        else:
+            validation = reproduce_all(
+                config,
+                output_directory,
+                workers=args.workers,
+                reuse_simulation=args.reuse_simulation,
+            )
+    finally:
+        peak_memory = memory_monitor.stop()
+    manifest = write_manifest(
+        output_directory,
+        command=command,
+        started=started,
+        config_path=config_path,
+        validation=validation,
+        peak_combined_memory_bytes=peak_memory,
+    )
+    print(f"validation: {validation['status']}")
+    print(f"manifest: {manifest}")
+
+
+if __name__ == "__main__":
+    main()

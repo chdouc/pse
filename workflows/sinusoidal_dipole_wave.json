@@ -16,9 +16,9 @@
       "kind": "compute",
       "script": "code/sinusoidal_dipole/compute_wave_velocity_fields.py",
       "arguments": {
-        "index": "${index}",
+        "input": "artifacts/reproduction/full/data/simulation.h5",
         "times": [10.0, 50.0],
-        "output": "code/sinusoidal_dipole/data/sinusoidal_dipole_wave_velocity_fields.npz"
+        "output": "artifacts/reproduction/full/data/sinusoidal_dipole_wave_velocity_fields.npz"
       }
     },
     {
@@ -27,18 +27,18 @@
       "script": "code/sinusoidal_dipole/plot_wave_velocity_fields.py",
       "supports_no_tex": true,
       "arguments": {
-        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_wave_velocity_fields.npz",
-        "output_directory": "code/sinusoidal_dipole/figures",
+        "input": "artifacts/reproduction/full/data/sinusoidal_dipole_wave_velocity_fields.npz",
+        "output_directory": "artifacts/reproduction/full/figures",
         "colormap": "twilight_shifted"
       }
     }
   ],
   "validation": {
     "type": "sinusoidal_dipole_wave",
-    "data": "code/sinusoidal_dipole/data/sinusoidal_dipole_wave_velocity_fields.npz",
+    "data": "artifacts/reproduction/full/data/sinusoidal_dipole_wave_velocity_fields.npz",
     "figure_stems": [
-      "code/sinusoidal_dipole/figures/sinusoidal_dipole_wave_velocity_10IP",
-      "code/sinusoidal_dipole/figures/sinusoidal_dipole_wave_velocity_50IP"
+      "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_10IP",
+      "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_50IP"
     ]
   }
 }

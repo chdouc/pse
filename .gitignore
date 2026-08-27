@@ -12,3 +12,4 @@ code/*/figures/
 
 # Temporary visual-quality-control renders
 tmp/
+artifacts/

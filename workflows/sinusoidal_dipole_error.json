@@ -15,8 +15,8 @@
       "kind": "compute",
       "script": "code/sinusoidal_dipole/compute_error_statistics.py",
       "arguments": {
-        "index": "${index}",
-        "output": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv"
+        "input": "artifacts/reproduction/full/data/simulation.h5",
+        "output": "artifacts/reproduction/full/data/sinusoidal_dipole_error_statistics.csv"
       }
     },
     {
@@ -24,16 +24,16 @@
       "kind": "plot",
       "script": "code/sinusoidal_dipole/plot_error_statistics.py",
       "arguments": {
-        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv",
-        "output": "code/sinusoidal_dipole/figures/sinusoidal_dipole_error_statistics"
+        "input": "artifacts/reproduction/full/data/sinusoidal_dipole_error_statistics.csv",
+        "output": "artifacts/reproduction/full/figures/figure8_error_statistics"
       }
     }
   ],
   "validation": {
     "type": "sinusoidal_dipole_error",
-    "data": "code/sinusoidal_dipole/data/sinusoidal_dipole_error_statistics.csv",
+    "data": "artifacts/reproduction/full/data/sinusoidal_dipole_error_statistics.csv",
     "figure_stems": [
-      "code/sinusoidal_dipole/figures/sinusoidal_dipole_error_statistics"
+      "artifacts/reproduction/full/figures/figure8_error_statistics"
     ]
   }
 }

@@ -1,361 +1,198 @@
 # Supplementary code for polarisation-resolved near-inertial wave dynamics
 
-This repository contains the calculation and plotting scripts accompanying
-the manuscript:
+This repository accompanies the manuscript:
 
 > **A spinor formalism for polarisation-resolved near-inertial wave dynamics**
 
-The repository is organized by background-flow type rather than manuscript
-figure number. Numerical calculations and figure generation are separate, so
-calculation outputs can be inspected, validated, and reused without repeating
-the expensive eigensystem or simulation-data processing steps.
+It contains the equations, initial conditions, parameter configuration,
+numerical solvers, plotting scripts and movie renderer needed to reproduce the
+reported results. No observational data, precomputed simulation files, private
+server, or machine-specific path is required.
 
-## Design
+## Reproduce the results
 
-Each manuscript case has a version-controlled workflow in `workflows/`.
-A workflow records the physical and numerical parameters, calculation step,
-plotting steps, expected outputs, and validation method. All steps are invoked
-through `run_workflow.py`; no source file is modified when parameters change.
-
-The workflow layer provides:
-
-- one explicit parameter record for each manuscript case;
-- controlled comparisons using the same input conditions;
-- independent `compute`, `plot`, `render`, `validate`, and `all` stages;
-- a dry-run mode that displays commands before execution;
-- automated checks of output structure and selected reference values.
-
-The individual scripts remain directly executable and can still be used
-without the workflow runner.
-
-## Repository structure
-
-```text
-.
-|-- README.md
-|-- requirements.txt
-|-- run_workflow.py
-|-- validate_outputs.py
-|-- workflows/
-|   |-- parallel_shear.json
-|   |-- gaussian_vortex.json
-|   |-- polarisation_geometry_movie.json
-|   |-- sinusoidal_dipole_error.json
-|   |-- sinusoidal_dipole_wave.json
-|   `-- sinusoidal_dipole_movie.json
-`-- code/
-    |-- common/
-    |   `-- custom_gradient_32_to_256.mat
-    |-- parallel_shear/
-    |   |-- compute_eigenanalysis.py
-    |   |-- plot_spectrum.py
-    |   `-- plot_eigenfunctions.py
-    |-- gaussian_vortex/
-    |   |-- compute_eigenanalysis.py
-    |   |-- plot_spectrum.py
-    |   `-- plot_eigenfunctions.py
-    |-- polarisation_geometry/
-    |   |-- compute_polarisation_trajectories.py
-    |   |-- render_polarisation_movie.py
-    |   `-- README.md
-    `-- sinusoidal_dipole/
-        |-- compute_error_statistics.py
-        |-- plot_error_statistics.py
-        |-- compute_wave_velocity_fields.py
-        |-- plot_wave_velocity_fields.py
-        |-- compute_movie_fields.py
-        |-- render_wave_velocity_movie.py
-        `-- validate_wave_velocity_movie.py
-```
-
-| Workflow | Calculation | Manuscript figures |
-| --- | --- | --- |
-| `parallel_shear` | Eigenvalue spectra and selected eigenfunctions | 4 and 5 |
-| `gaussian_vortex` | Radial eigenvalue spectra and selected eigenfunctions | 6 and 7 |
-| `polarisation_geometry_movie` | Stokes-Poincare geometry and exact matrix-generator actions | Figures 1 and 2; supplementary movie 1 |
-| `sinusoidal_dipole_error` | Controlled model-error comparison | 8 |
-| `sinusoidal_dipole_wave` | Controlled squared wave-velocity comparison | 9 and 10 |
-| `sinusoidal_dipole_movie` | Time-resolved wave fields and NRE curves | Figures 9 and 10; supplementary movie 2 |
-
-Figure numbers are manuscript cross-references only. File and directory names
-describe the corresponding background flow and calculation.
-
-## Requirements
-
-The scripts require Python 3.10 or later. Install the tested runtime
-dependencies with:
+Python 3.11--3.13 is supported. Create a clean environment and install the
+pinned dependencies:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-On Windows, activate the intended Conda or virtual environment first. If
-`python --version` opens the Microsoft Store or prints no version, the
-Microsoft Store placeholder is being selected instead of a Python
-installation.
+On Windows, activate the environment with `.venv\Scripts\activate`.
 
-The publication-style plots use LaTeX by default. If LaTeX and the required
-font packages are unavailable, add `--no-tex` to the workflow command.
-
-## Quick start
-
-Clone the repository and list the available workflows:
+Run the fast end-to-end check first:
 
 ```bash
-git clone https://github.com/chdouc/pse.git
-cd pse
-python run_workflow.py --list
+python reproduce.py --smoke-test
 ```
 
-### Self-contained eigenanalysis workflows
-
-Run the complete parallel-shear calculation, create the figures, and validate
-the outputs:
+Run the manuscript-resolution sinusoidal-dipole calculation, save the data,
+generate Figures 8--10 and Movie 2, and validate the numerical results:
 
 ```bash
-python run_workflow.py parallel_shear --validate
+python reproduce.py --all
 ```
 
-Run the corresponding Gaussian-vortex workflow:
+If a completed `simulation.h5` already exists and only the downstream files
+need to be rebuilt, use `python reproduce.py --all --reuse-simulation`. This
+option fails when the simulation archive is absent. Omit it for a clean
+reproduction from the equations.
+
+The full calculation uses three independent mode workers by default. The
+worker count can be reduced on a memory-constrained machine:
 
 ```bash
-python run_workflow.py gaussian_vortex --validate
+python reproduce.py --all --workers 1
 ```
 
-The Gaussian-vortex workflow uses the manuscript's 512-mode Bessel-Galerkin
-discretization and is the most computationally demanding calculation.
+No network access is used after the Python dependencies and repository have
+been installed. The calculation starts from analytic initial conditions.
 
-### Sinusoidal-dipole workflows
+## Numerical configuration
 
-These workflows require simulation index tables and the MATLAB v7.3/HDF5
-files used in the manuscript.
+The version-controlled configuration is `config/reproduction.json`. The full
+calculation uses the manuscript parameters:
 
-Compute and plot the model-error comparison:
+- domain depth `H=2000 m`;
+- Coriolis frequency `f=10^-4 s^-1` and buoyancy frequency `N=20f`;
+- sinusoidal-dipole length scale `L=50 km` and speed `U=0.25 m s^-1`;
+- periodic horizontal domain `[-pi L, pi L)^2`;
+- `128 x 128` Fourier grid;
+- 64 time steps per inertial period and 50 inertial periods;
+- forced two-thirds dealiasing and no diffusion;
+- identical unit horizontal-velocity initial condition for every model;
+- a fixed random seed, although the configured initial condition is analytic.
 
-```bash
-python run_workflow.py sinusoidal_dipole_error --index path/to/error_index.csv --validate
-```
+The modal HBE system is advanced with RK4. YBJ, TSB and YBJ+ use Strang
+splitting with RK4 for background advection/refraction and an exact Fourier
+dispersion step. PSE uses matrix ETDRK4 for the constant linear operator and
+pseudospectral evaluation of the background-flow terms.
 
-Extract and plot the squared wave-velocity comparison:
+## Vertical modes
 
-```bash
-python run_workflow.py sinusoidal_dipole_wave --index path/to/wave_field_index.csv --validate
-```
-
-Prepare, render, and validate supplementary movie 2:
-
-```bash
-python run_workflow.py sinusoidal_dipole_movie \
-  --data-root path/to/processed/sweep \
-  --output-directory path/to/movies \
-  --ffmpeg path/to/ffmpeg \
-  --ffprobe path/to/ffprobe
-```
-
-The movie workflow accepts either `--data-root` (containing one
-`*_index.csv`) or `--index`. Each selected processed MATLAB file must contain
-the complete YBJ, TSB, YBJ+, PSE and HBE complex-velocity fields on the
-manuscript's 128-by-128 grid with `fc=64` (64 time steps per inertial period),
-together with the step-resolved NRE curves. Local input paths are always
-supplied at run time and are not stored in the public workflow.
-
-On systems without LaTeX, for example:
-
-```bash
-python run_workflow.py parallel_shear --no-tex --validate
-```
-
-### Polarisation-geometry movie
-
-Supplementary movie 1 is self-contained and uses no simulation input. Supply
-the artifact directory at run time:
-
-```bash
-python run_workflow.py polarisation_geometry_movie \
-  --output-directory path/to/movies \
-  --validate
-```
-
-The calculation stage follows the manuscript spinor convention
-`|A> = (A_up, conj(A_down))^T`, saves every spinor, Stokes vector and physical
-hodograph used in the movie, and performs the matrix and polarisation-geometry
-checks. The rendering stage reads those saved arrays, encodes a silent
-MP4/H.264/yuv420p movie, verifies the stream and writes the separate JFM
-caption, accessibility description, submission notes and preview.
-
-The initial state is reconstructed from the Figure 2 source parameters:
+The rigid-lid, flat-bottom modes are used without internal normalization:
 
 ```text
-|S| = 1.21
-varphi = pi/2 - 2 atan(1/5)
-lambda = pi/3
-gamma = -pi/4
+Z_n(z) = cos(n*pi*z/H),  n=1,2,...
+h_n = 2H/n
 ```
 
-Chapter 1 uses normalised Stokes directions. Chapter 2 uses unnormalised
-Stokes vectors and retains the unit sphere only as a scale reference.
+For `H=2000 m`, modes `n=1,4,8,16,32` have vertical wavelengths
+`4000, 1000, 500, 250, 125 m`, respectively. The physical reconstruction
+factor is therefore exactly one. Each run records this convention in the HDF5
+attributes.
 
-## Workflow controls
-
-Run only the calculation or plotting stage:
-
-```bash
-python run_workflow.py parallel_shear --stage compute
-python run_workflow.py parallel_shear --stage plot
-```
-
-Supplementary movie 2 additionally exposes independent render and validation
-stages:
-
-```bash
-python run_workflow.py sinusoidal_dipole_movie \
-  --output-directory path/to/movies \
-  --stage render
-
-python run_workflow.py sinusoidal_dipole_movie \
-  --output-directory path/to/movies \
-  --stage validate
-```
-
-Use `--fps`, `--resolution`, `--frame-stride`, `--hold-frames`,
-`--opening-seconds`, `--title-seconds`, `--chapter-end-seconds`, and `--crf`
-to override movie-rendering defaults.
-Movie 2 holds each terminal case frame for an additional 1.5 seconds. Its
-typography, model colours and NRE legend order are aligned with
-manuscript figures 8--10; its chapter cards also give the common 2000-m depth
-and the corresponding unchanged vertical wavelengths from `h=2H/n`.
-The n=4 absolute-field colour scale has a fixed upper limit of 37.5.
-Difference colourbars use
-the explicit model-minus-HBEs normalised squared-velocity expression, and the
-curve panel is labelled as instantaneous NRE to distinguish it from the
-time-averaged NRE in manuscript figure 8. Scientific-panel titles use 20-pt
-type, with 17-pt type for the longer NRE title. Title-card hierarchy, font scale and
-vertical placement are aligned with supplementary movie 1. Like movie 1, the
-opening uses an overall movie page followed by the first chapter page. The
-overall page lasts 2 seconds, while every Chapter page lasts 4 seconds so its
-mode, wavelength and time-range information can be read comfortably. The
-submission workflow restricts the frame rate to 20--24 fps and always encodes
-H.264/yuv420p with a constant frame rate, fast start, and no audio stream.
-
-For the movie workflow, pass the same output directory to either stage:
-
-```bash
-python run_workflow.py polarisation_geometry_movie \
-  --output-directory path/to/movies \
-  --stage compute
-
-python run_workflow.py polarisation_geometry_movie \
-  --output-directory path/to/movies \
-  --stage plot
-```
-
-Inspect the exact commands without executing them:
-
-```bash
-python run_workflow.py parallel_shear --dry-run
-```
-
-Validate previously generated results:
-
-```bash
-python validate_outputs.py parallel_shear
-python validate_outputs.py all
-```
-
-Use `--data-only` to validate calculation outputs without requiring figure
-files:
-
-```bash
-python validate_outputs.py gaussian_vortex --data-only
-```
-
-Validate an existing movie output directory:
-
-```bash
-python validate_outputs.py polarisation_geometry_movie \
-  --output-directory path/to/movies
-```
-
-Run any individual script with `--help` to inspect its lower-level numerical
-and plotting options.
-
-## Sinusoidal-dipole inputs
-
-The `data_mat` entries in an index table may be absolute paths or paths
-relative to the index file.
-
-The error-statistics index must contain:
+The tests verify
 
 ```text
-Ro, background_velocity_mps, Lv_m, data_mat
+dZ_n/dz = 0 at z=0 and z=-H,
+mean_z(Z_n) = 0 for n >= 1.
 ```
 
-The wave-field index must contain:
+Run the complete test suite with:
 
-```text
-background_velocity_mps, Lv_m, data_mat
+```bash
+python -m pytest -q
 ```
-
-The error comparison holds the background speed and averaging windows fixed
-while comparing YBJ, TSB, YBJ+, and PSE. The wave-field comparison uses the
-same saved cases and ordering for YBJ, TSB, YBJ+, PSE, and the hydrostatic
-Boussinesq equations.
-
-Supplementary movie 2 uses modes `n=4`, `n=16`, and `n=32`. Its intermediate
-NPZ records the true selected times, source indices and files, model order,
-normalisation, fixed colour limits, NRE curves, PSE reconstruction metadata,
-and raw-versus-processed reference checks. Physical fields are never
-interpolated; playback speed is controlled by holding or striding true saved
-states.
 
 ## Outputs
 
-Calculation scripts write reusable data beside the corresponding background
-flow:
+The default full output directory is `artifacts/reproduction/full/`:
 
-- compressed NumPy archives (`.npz`) for eigenanalysis and wave fields;
-- comma-separated values (`.csv`) for error statistics;
-- JSON metadata files for eigenanalysis parameters.
+```text
+artifacts/reproduction/full/
+|-- data/
+|   |-- simulation.h5
+|   |-- sinusoidal_dipole_error_statistics.csv
+|   |-- sinusoidal_dipole_wave_velocity_fields.npz
+|   `-- sinusoidal_dipole_movie_fields.npz
+|-- figures/
+|   |-- figure8_error_statistics.{png,pdf}
+|   |-- sinusoidal_dipole_wave_velocity_10IP.{png,pdf}
+|   `-- sinusoidal_dipole_wave_velocity_50IP.{png,pdf}
+|-- movies/
+|   `-- movie2.mp4
+|-- validation.json
+`-- manifest.json
+```
 
-Plotting scripts read these files and write PNG and PDF figures to a
-neighboring `figures/` directory. Generated `data/` and `figures/` directories
-are excluded from version control because they can be recreated by the
-configured workflows.
+The movie renderer also writes caption, accessibility and encoding-quality
+sidecars beside its working output. Only `movie2.mp4` is the supplementary
+video itself.
 
-Movie workflows write archives, metadata, MP4 files, previews and text
-sidecars to the output directory supplied on the command line. Supplementary
-movie 2 also writes a pre/post-encoding QC contact sheet, render manifest and
-quality report. Managed temporary PNG frames are removed after a successful
-encode. These external submission artifacts are not committed to this
-repository.
+`manifest.json` records the command, operating system, Python and dependency
+versions, elapsed time, peak resident memory, every output file, its size and
+its SHA-256 checksum. `validation.json` records the numerical values used by
+the acceptance tests.
+
+The full calculation is CPU intensive. Three workers require approximately
+4 GB of available memory; 8 GB total system memory and 3 GB of free disk space
+are recommended. Actual time and peak memory are recorded in the manifest.
+
+All files under `artifacts/` are disposable caches. Removing that directory
+and rerunning `python reproduce.py --all` regenerates every listed result from
+the equations and analytic initial condition.
 
 ## Validation
 
-`validate_outputs.py` checks:
+The full workflow exits with a nonzero status if any required check fails. It
+checks:
 
-- required arrays, table columns, dimensions, and model ordering;
-- finite and physically admissible values;
-- consistency between coordinates, modes, fields, and metadata;
-- selected Gaussian-vortex eigenfrequencies;
-- the reference wave-field maxima for vertical mode 4 at 50 inertial periods;
-- the presence of both PNG and PDF figure outputs.
-- the manuscript matrix definitions, Clifford relations and exact matrix
-  exponentials used in supplementary movie 1;
-- the Stokes norm, handedness, ellipticity, orientation, common-phase and
-  generator-action identities;
-- consistency of every movie sphere vector and hodograph with the same saved
-  spinor state;
-- exact 0--50 IP source ordering, PSE reconstruction, 10 IP and 50 IP field
-  consistency, NRE agreement, fixed colour scales and symmetric difference
-  limits for supplementary movie 2;
-- representative movie-2 frames before and after encoding, including
-  compression PSNR and readable preview/contact-sheet dimensions;
-- the MP4 container, H.264 profile, yuv420p pixel format, resolution, constant
-  frame rate, frame count, duration, absence of audio, fast-start ordering,
-  decodability and 10 MB size limit.
+- the 128-by-128 grid, 64 time steps per inertial period and complete mode set;
+- vertical-mode Neumann boundary conditions, zero mean, wavelength mapping and
+  reconstruction factor;
+- finite fields and NRE curves and a consistent initial PSE reconstruction;
+- all 136 Figure 8 model/mode/window statistics;
+- individual and across-mode mean NRE ranges reported in the manuscript;
+- the five `n=4`, 50-IP squared-velocity maxima;
+- the maximum pointwise PSE--HBE squared-velocity difference for `n=32` at
+  10 IP;
+- agreement between NRE recomputed from saved complex fields and the
+  step-resolved NRE curves;
+- generation of the H.264/yuv420p Movie 2 file;
+- a full Movie 2 decode, codec, pixel format, frame count, duration,
+  resolution, file-size and representative-frame quality check.
 
-During repository preparation, the reorganized scripts were also compared
-with the original manuscript scripts. Eigenvalues, eigenvectors, error
-statistics, and wave fields agreed numerically. The parallel-shear,
-Gaussian-vortex, and sinusoidal-dipole error reference figures were reproduced
-pixel for pixel.
+The tolerances and reference quantities are recorded in
+`config/reproduction.json`. A failed check reports the quantity and measured
+value instead of silently accepting a changed result.
+
+## Repository layout
+
+The source tree is organized by background-flow type rather than figure
+number:
+
+```text
+code/
+|-- parallel_shear/          # Figures 4 and 5
+|-- gaussian_vortex/         # Figures 6 and 7
+|-- polarisation_geometry/   # Figures 1 and 2 and Movie 1
+`-- sinusoidal_dipole/       # Figures 8--10 and Movie 2
+```
+
+The parallel-shear, Gaussian-vortex and polarisation-geometry workflows remain
+available through `run_workflow.py`. The sinusoidal-dipole component scripts
+also remain directly executable, but their only numerical input is the
+`simulation.h5` created by `reproduce.py`.
+
+Examples:
+
+```bash
+python run_workflow.py parallel_shear --validate
+python run_workflow.py gaussian_vortex --validate
+python run_workflow.py polarisation_geometry_movie --output-directory artifacts/movie1 --validate
+```
+
+## Data availability
+
+All numerical data underlying the figures and supplementary movies are
+generated by the equations, initial conditions and parameters in this
+repository. Figures 8--10 and Movie 2 are recreated from zero with `python
+reproduce.py --all`; Figures 1--7 and Movie 1 use the configured workflows
+listed above. No external research data or precomputed numerical results are
+required, and generated arrays are excluded from version control.
+
+The historical dependency audit and the corresponding replacements are
+documented in `AUDIT.md`.

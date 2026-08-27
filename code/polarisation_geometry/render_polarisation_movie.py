@@ -1,4 +1,4 @@
-"""Render supplementary movie 1 from precomputed polarisation data.
+"""Render supplementary movie 1 from repository-generated polarisation data.
 
 This script performs no spinor evolution or Stokes conversion. It reads the
 verified histories from ``movie1_data.npz``, evaluates the display-time fast

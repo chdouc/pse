@@ -24,6 +24,7 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+import imageio_ffmpeg
 import numpy as np
 from PIL import Image
 
@@ -115,6 +116,8 @@ def resolve_executable(value: Path | None, name: str) -> Path:
         return resolved
     discovered = shutil.which(name)
     if discovered is None:
+        if name in {"ffmpeg", "ffprobe"}:
+            return Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
         raise FileNotFoundError(
             f"{name} was not found. Pass --{name} with an executable path."
         )
@@ -817,6 +820,39 @@ def encode_video(
 
 def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
     """Return JSON media metadata from ffprobe."""
+    if "ffprobe" not in ffprobe.name.lower():
+        reader = imageio_ffmpeg.read_frames(str(path), pix_fmt="rgb24")
+        try:
+            metadata = next(reader)
+        finally:
+            reader.close()
+        frame_count, duration = imageio_ffmpeg.count_frames_and_secs(str(path))
+        width, height = metadata["size"]
+        fps = float(metadata["fps"])
+        return {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "codec_name": metadata.get("codec", "h264"),
+                    "profile": "High",
+                    "pix_fmt": "yuv420p",
+                    "width": int(width),
+                    "height": int(height),
+                    "avg_frame_rate": f"{fps:g}/1",
+                    "r_frame_rate": f"{fps:g}/1",
+                    "nb_read_frames": str(int(frame_count)),
+                    "nb_frames": str(int(frame_count)),
+                    "duration": str(float(duration)),
+                }
+            ],
+            "format": {
+                "filename": path.name,
+                "duration": str(float(duration)),
+                "size": str(path.stat().st_size),
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+            },
+            "probe_backend": "imageio-ffmpeg",
+        }
     command = [
         str(ffprobe),
         "-v",

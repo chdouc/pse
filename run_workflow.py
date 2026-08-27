@@ -124,13 +124,6 @@ def run_workflow(args: argparse.Namespace) -> None:
         raise ValueError(f"Workflow {args.workflow!r} has no {args.stage!r} stage.")
 
     replacements = {
-        "index": str(args.index) if args.index is not None else None,
-        "data_root": (
-            str(args.data_root) if args.data_root is not None else None
-        ),
-        "raw_data_root": (
-            str(args.raw_data_root) if args.raw_data_root is not None else None
-        ),
         "output_directory": (
             str(args.output_directory)
             if args.output_directory is not None
@@ -185,21 +178,6 @@ def parse_args() -> argparse.Namespace:
         choices=("compute", "plot", "render", "validate", "all"),
         default="all",
         help="Run one configured step kind, or the complete workflow.",
-    )
-    parser.add_argument(
-        "--index",
-        type=Path,
-        help="Simulation index required by sinusoidal-dipole calculations.",
-    )
-    parser.add_argument(
-        "--data-root",
-        type=Path,
-        help="Simulation root containing a discoverable index.",
-    )
-    parser.add_argument(
-        "--raw-data-root",
-        type=Path,
-        help="Raw simulation root used by movie field reconstruction.",
     )
     parser.add_argument(
         "--output-directory",

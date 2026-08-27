@@ -70,12 +70,8 @@
       "kind": "compute",
       "script": "code/sinusoidal_dipole/compute_movie_fields.py",
       "arguments": {
-        "index": "${index?}",
-        "data_root": "${data_root?}",
-        "output": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
-        "start_ip": 0.0,
-        "stop_ip": 50.0,
-        "sample_interval_ip": 1.0,
+        "input": "artifacts/reproduction/full/data/simulation.h5",
+        "output": "artifacts/reproduction/full/data/sinusoidal_dipole_movie_fields.npz",
         "difference_quantile": 0.995
       }
     },
@@ -84,7 +80,7 @@
       "kind": "render",
       "script": "code/sinusoidal_dipole/render_wave_velocity_movie.py",
       "arguments": {
-        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
+        "input": "artifacts/reproduction/full/data/sinusoidal_dipole_movie_fields.npz",
         "output_directory": "${output_directory}",
         "ffmpeg": "${ffmpeg?}",
         "ffprobe": "${ffprobe?}",
@@ -103,7 +99,7 @@
       "kind": "validate",
       "script": "code/sinusoidal_dipole/validate_wave_velocity_movie.py",
       "arguments": {
-        "input": "code/sinusoidal_dipole/data/sinusoidal_dipole_movie_fields.npz",
+        "input": "artifacts/reproduction/full/data/sinusoidal_dipole_movie_fields.npz",
         "output_directory": "${output_directory}",
         "ffmpeg": "${ffmpeg?}",
         "ffprobe": "${ffprobe?}"
