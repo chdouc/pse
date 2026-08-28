@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "random_seed": 20260826,
+  "reference_metrics_file": "config/reference_metrics.json",
   "physical_parameters": {
     "coriolis_frequency_s-1": 0.0001,
     "buoyancy_frequency_ratio": 20.0,
@@ -41,14 +42,5 @@
     "pse_mean_nre_0_50ip_n_ge_12_percent_range": [0.25, 0.5],
     "pse_individual_nre_0_50ip_n_ge_12_percent_max": 1.0,
     "scalar_mean_nre_0_50ip_n_ge_12_percent_range": [2.0, 5.0]
-  },
-  "reference_values": {
-    "n4_50ip_squared_velocity_maxima": {
-      "YBJ": 31.8,
-      "TSB": 37.5,
-      "YBJ+": 37.5,
-      "PSE": 37.5,
-      "HBEs": 27.6
-    }
   }
 }

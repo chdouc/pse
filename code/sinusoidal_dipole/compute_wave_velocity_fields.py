@@ -9,13 +9,13 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from specification import MODEL_NAMES
 
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parent
     / "data"
     / "sinusoidal_dipole_wave_velocity_fields.npz"
 )
-MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
 VERTICAL_MODES = (1, 4, 8, 16, 32)
 TARGET_TIMES = (10.0, 50.0)
 

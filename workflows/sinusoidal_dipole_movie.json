@@ -93,17 +93,12 @@
         "chapter_end_seconds": "${chapter_end_seconds?}",
         "crf": "${crf?}"
       }
-    },
-    {
-      "name": "validate_wave_velocity_movie",
-      "kind": "validate",
-      "script": "code/sinusoidal_dipole/validate_wave_velocity_movie.py",
-      "arguments": {
-        "input": "artifacts/reproduction/full/data/sinusoidal_dipole_movie_fields.npz",
-        "output_directory": "${output_directory}",
-        "ffmpeg": "${ffmpeg?}",
-        "ffprobe": "${ffprobe?}"
-      }
     }
-  ]
+  ],
+  "validation": {
+    "type": "sinusoidal_dipole_movie",
+    "uses_output_directory": true,
+    "data": "artifacts/reproduction/full/data/sinusoidal_dipole_movie_fields.npz",
+    "movie_filename": "movie2.mp4"
+  }
 }

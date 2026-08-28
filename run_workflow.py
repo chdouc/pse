@@ -119,6 +119,21 @@ def build_command(
 def run_workflow(args: argparse.Namespace) -> None:
     """Execute the selected workflow steps."""
     workflow = load_workflow(args.workflow)
+    if args.stage == "validate":
+        if args.dry_run:
+            print(f"validate_outputs.py {args.workflow}")
+            return
+        validation_command = [
+            sys.executable,
+            str(ROOT / "validate_outputs.py"),
+            args.workflow,
+        ]
+        if args.output_directory is not None:
+            validation_command.extend(
+                ("--output-directory", str(args.output_directory))
+            )
+        subprocess.run(validation_command, cwd=ROOT, check=True)
+        return
     steps = selected_steps(workflow, args.stage)
     if not steps:
         raise ValueError(f"Workflow {args.workflow!r} has no {args.stage!r} stage.")
@@ -135,6 +150,8 @@ def run_workflow(args: argparse.Namespace) -> None:
         "resolution": args.resolution,
         "frame_stride": args.frame_stride,
         "hold_frames": args.hold_frames,
+        "opening_seconds": args.opening_seconds,
+        "title_seconds": args.title_seconds,
         "chapter_end_seconds": args.chapter_end_seconds,
         "crf": args.crf,
     }
@@ -220,6 +237,16 @@ def parse_args() -> argparse.Namespace:
         "--chapter-end-seconds",
         type=float,
         help="Additional still hold after each movie chapter.",
+    )
+    parser.add_argument(
+        "--opening-seconds",
+        type=float,
+        help="Duration of each opening card in seconds.",
+    )
+    parser.add_argument(
+        "--title-seconds",
+        type=float,
+        help="Duration of each chapter title card in seconds.",
     )
     parser.add_argument(
         "--crf",

@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying manuscript."
+type: software
+title: "Supplementary code for A spinor formalism for polarisation-resolved near-inertial wave dynamics"
+license: "BSD-3-Clause"
+authors:
+  - family-names: Chen
+    given-names: Haodui
+  - family-names: Lin
+    given-names: Sujie
+  - family-names: Xie
+    given-names: Jin-Han
+  - family-names: Guan
+    given-names: Shoude
+  - family-names: Zhao
+    given-names: Wei
+  - family-names: Tian
+    given-names: Jiwei
+repository-code: "https://github.com/chdouc/pse"
+url: "https://github.com/chdouc/pse"
+keywords:
+  - near-inertial waves
+  - polarisation
+  - reduced models
+  - reproducible research
+preferred-citation:
+  type: article
+  title: "A spinor formalism for polarisation-resolved near-inertial wave dynamics"
+  authors:
+    - family-names: Chen
+      given-names: Haodui
+    - family-names: Lin
+      given-names: Sujie
+    - family-names: Xie
+      given-names: Jin-Han
+    - family-names: Guan
+      given-names: Shoude
+    - family-names: Zhao
+      given-names: Wei
+    - family-names: Tian
+      given-names: Jiwei

@@ -19,11 +19,14 @@ from typing import Any, Iterable
 import h5py
 import numpy as np
 
+from specification import (
+    MODEL_NAMES,
+    NRE_MODEL_NAMES,
+    simulation_configuration,
+    simulation_signature,
+    validate_config,
+)
 from vertical_modes import mode_metadata, validate_vertical_mode
-
-
-MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
-NRE_MODEL_NAMES = MODEL_NAMES[:-1]
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,9 @@ class Parameters:
     total_periods: int
     seed: int
     contour_points: int
+    dealiasing: str
+    diffusion: str
+    output_precision: str
 
     @property
     def buoyancy_frequency(self) -> float:
@@ -67,14 +73,11 @@ class Parameters:
 
 def parameters_from_config(config: dict[str, Any]) -> Parameters:
     """Construct the numerical parameter set from a reproduction config."""
+    validate_config(config)
     physical = config["physical_parameters"]
     numerical = config["numerical_parameters"]
     grid = int(numerical["horizontal_grid"])
     steps = int(numerical["time_steps_per_inertial_period"])
-    if grid < 8 or grid % 2:
-        raise ValueError("The horizontal grid must be an even integer of at least 8.")
-    if steps < 4:
-        raise ValueError("At least four time steps per inertial period are required.")
     return Parameters(
         f=float(physical["coriolis_frequency_s-1"]),
         buoyancy_ratio=float(physical["buoyancy_frequency_ratio"]),
@@ -87,12 +90,17 @@ def parameters_from_config(config: dict[str, Any]) -> Parameters:
         total_periods=int(numerical["total_inertial_periods"]),
         seed=int(config["random_seed"]),
         contour_points=int(numerical["pse_etdrk4_contour_points"]),
+        dealiasing=str(numerical["dealiasing"]),
+        diffusion=str(numerical["diffusion"]),
+        output_precision=str(numerical["output_precision"]),
     )
 
 
 def load_config(path: Path) -> dict[str, Any]:
     """Load a JSON reproduction configuration."""
-    return json.loads(path.read_text(encoding="utf-8"))
+    config = json.loads(path.read_text(encoding="utf-8"))
+    validate_config(config)
+    return config
 
 
 class Grid:
@@ -352,44 +360,19 @@ def _pse_step(
     return eu + f1u + 2.0 * f2u + f3u, ed + f1d + 2.0 * f2d + f3d
 
 
-def _slaved_counterclockwise(
-    up: np.ndarray,
-    c: float,
-    grid: Grid,
-) -> np.ndarray:
-    alpha = 0.25 * c**2
-    up_hat = fft2(up)
-    delta2_hat = -(grid.kx**2 - grid.ky**2) * up_hat
-    delta3_hat = -(2.0 * grid.kx * grid.ky) * up_hat
-    anisotropic = ifft2(1j * delta2_hat + delta3_hat)
-    strain_rhs = -0.25j * (grid.xi2 - 1j * grid.xi3) * up
-    dispersion_rhs = 1j * alpha * anisotropic
-    return ifft2(fft2(strain_rhs + dispersion_rhs) / (1.0 + alpha * grid.k2))
-
-
 def _initial_pse(
     target: np.ndarray,
-    c: float,
     grid: Grid,
-    *,
-    tolerance: float = 1.0e-12,
-    max_iterations: int = 25,
 ) -> tuple[np.ndarray, np.ndarray, int, float]:
-    up = target.copy()
-    scale = np.linalg.norm(target)
-    for iteration in range(1, max_iterations + 1):
-        down = _slaved_counterclockwise(up, c, grid)
-        updated = target - np.conj(down)
-        change = float(np.linalg.norm(updated - up) / scale)
-        up = updated
-        if change <= tolerance:
-            break
-    down = _slaved_counterclockwise(up, c, grid)
+    """Apply the paper's frozen-local, strain-only O(Ro) initialisation."""
+    down = 0.25j * (grid.xi2 + 1j * grid.xi3) * np.conj(target)
+    up = target - down
     up_hat = fft2(up) * grid.mask
-    down_hat = fft2(down) * grid.mask
+    down_hat = fft2(np.conj(down)) * grid.mask
+    scale = np.linalg.norm(target)
     reconstructed = ifft2(up_hat) + np.conj(ifft2(down_hat))
     residual = float(np.linalg.norm(reconstructed - target) / scale)
-    return up_hat, down_hat, iteration, residual
+    return up_hat, down_hat, 0, residual
 
 
 def _physical_fields(
@@ -430,7 +413,7 @@ def simulate_mode(
     scalar = np.stack((target.copy(), target.copy(), target.copy()), axis=0)
     hbe = np.zeros((3, grid.n, grid.n), dtype=float)
     hbe[0] = parameters.amplitude_m_s
-    up_hat, down_hat, iterations, initial_residual = _initial_pse(target, c, grid)
+    up_hat, down_hat, iterations, initial_residual = _initial_pse(target, grid)
 
     saved_periods_array = np.asarray(sorted(set(saved_periods)), dtype=int)
     if np.any(saved_periods_array < 0) or np.any(
@@ -443,7 +426,7 @@ def simulate_mode(
         field_data = group.create_dataset(
             "complex_velocity",
             shape=field_shape,
-            dtype=np.complex64,
+            dtype=np.dtype(parameters.output_precision),
             chunks=(1, 1, grid.n, grid.n),
             compression="gzip",
             compression_opts=1,
@@ -451,7 +434,9 @@ def simulate_mode(
         )
     else:
         field_data = group.create_dataset(
-            "complex_velocity", shape=field_shape, dtype=np.complex64
+            "complex_velocity",
+            shape=field_shape,
+            dtype=np.dtype(parameters.output_precision),
         )
     group.create_dataset("field_times_ip", data=saved_periods_array.astype(float))
     times = np.arange(parameters.step_count + 1) / parameters.steps_per_period
@@ -465,7 +450,7 @@ def simulate_mode(
         for index in range(len(NRE_MODEL_NAMES)):
             nre[index, step] = relative_l2(reference, fields[index])
         if field_cursor < saved_steps.size and step == saved_steps[field_cursor]:
-            field_data[field_cursor] = fields.astype(np.complex64)
+            field_data[field_cursor] = fields.astype(parameters.output_precision)
             field_cursor += 1
 
     sample(0)
@@ -498,6 +483,7 @@ def simulate_mode(
             "phase_speed_m_s": parameters.phase_speed(mode),
             "dimensionless_phase_speed": c,
             "pse_initial_iterations": iterations,
+            "pse_initialisation": "frozen-local strain-only O(Ro)",
             "pse_initial_reconstruction_relative_l2": initial_residual,
             "runtime_seconds": time.perf_counter() - start,
         }
@@ -538,6 +524,10 @@ def create_simulation_file(
         with h5py.File(temporary, "w") as handle:
             handle.attrs["schema_version"] = 1
             handle.attrs["config_json"] = json.dumps(config, sort_keys=True)
+            handle.attrs["simulation_config_json"] = json.dumps(
+                simulation_configuration(config), sort_keys=True
+            )
+            handle.attrs["simulation_signature_sha256"] = simulation_signature(config)
             handle.attrs["model_names"] = json.dumps(MODEL_NAMES)
             handle.attrs["nre_model_names"] = json.dumps(NRE_MODEL_NAMES)
             handle.attrs["coordinate_convention"] = "x/L,y/L in [-pi,pi)"

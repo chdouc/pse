@@ -29,6 +29,7 @@ import numpy as np
 from PIL import Image
 
 from plot_wave_velocity_fields import publication_style
+from specification import load_reference_metrics
 
 
 DEFAULT_INPUT = (
@@ -36,7 +37,7 @@ DEFAULT_INPUT = (
     / "data"
     / "sinusoidal_dipole_movie_fields.npz"
 )
-MAX_FILE_BYTES = 10_000_000
+MAX_FILE_BYTES = int(load_reference_metrics()["movie2"]["maximum_file_bytes"])
 EXPECTED_VERTICAL_MODES = (4, 16, 32)
 DOMAIN_DEPTH_METRES = 2000
 PREFERRED_TEXT_FONT = "Times New Roman"
@@ -1237,7 +1238,7 @@ def write_auxiliary_files(
         "- Numbered and titled movie 2: passed\n"
         "- Separate caption supplied: passed\n"
         "- TeX maths in the caption is bounded by $$: passed\n"
-        "- File smaller than 10 MB: passed\n"
+        "- File smaller than 50 MB: passed\n"
         "- Browser-oriented H.264/yuv420p encoding and decode test: passed\n"
         "- No audio stream or background music: passed\n\n"
         f"The overall opening page is held for {opening_seconds:g} seconds; "

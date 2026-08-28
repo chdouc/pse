@@ -16,6 +16,11 @@ from PIL import Image
 from run_workflow import ROOT, load_workflow, workflow_names
 
 
+REFERENCE_METRICS = json.loads(
+    (ROOT / "config" / "reference_metrics.json").read_text(encoding="utf-8")
+)
+
+
 def require_keys(container: Any, keys: set[str], label: str) -> None:
     """Require a set of keys or columns in a data container."""
     available = set(container)
@@ -228,7 +233,8 @@ def validate_sinusoidal_dipole_wave(specification: dict[str, Any]) -> None:
             raise ValueError("The saved inertial-period times changed.")
         if not np.array_equal(modes, np.array([1, 4, 8, 16, 32])):
             raise ValueError("The saved vertical modes changed.")
-        if list(names) != ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]:
+        expected_names = REFERENCE_METRICS["model_names"]
+        if list(names) != expected_names:
             raise ValueError("The saved model order changed.")
         if fields.ndim != 5 or fields.shape[:3] != (
             times.size,
@@ -243,17 +249,50 @@ def validate_sinusoidal_dipole_wave(specification: dict[str, Any]) -> None:
         time_index = int(np.flatnonzero(np.isclose(times, 50.0))[0])
         mode_index = int(np.flatnonzero(modes == 4)[0])
         maxima = fields[time_index, mode_index].max(axis=(-2, -1))
-        expected = np.array(
-            [
-                31.8,
-                37.5,
-                37.5,
-                37.5,
-                27.6,
-            ]
-        )
+        expected_by_name = REFERENCE_METRICS["n4_50ip_squared_velocity_maxima"]
+        expected = np.array([expected_by_name[name] for name in expected_names])
         if not np.allclose(maxima, expected, rtol=0.0, atol=1.25):
             raise ValueError("The n=4 wave-field maxima at 50 IP changed.")
+
+
+def validate_background_flows(specification: dict[str, Any]) -> None:
+    """Validate the analytic fields used to plot Figure 3."""
+    path = ROOT / specification["data"]
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing calculation output: {path}")
+    required = {
+        "flow_names",
+        "coordinate_over_length",
+        "velocity_u_over_reference",
+        "velocity_v_over_reference",
+        "speed_over_reference",
+        "xi1_over_f",
+        "xi2_over_f",
+        "xi3_over_f",
+        "sampled_v_over_reference_at_y0",
+        "rossby_number",
+    }
+    with np.load(path) as data:
+        require_keys(data.files, required, path.name)
+        coordinate = data["coordinate_over_length"]
+        u = data["velocity_u_over_reference"]
+        v = data["velocity_v_over_reference"]
+        speed = data["speed_over_reference"]
+        if coordinate.ndim != 1 or not np.all(np.diff(coordinate) > 0.0):
+            raise ValueError("The Figure 3 coordinate must be strictly increasing.")
+        expected_shape = (3, coordinate.size, coordinate.size)
+        if u.shape != expected_shape or v.shape != expected_shape:
+            raise ValueError("The Figure 3 velocity dimensions are inconsistent.")
+        if not np.allclose(speed, np.sqrt(u**2 + v**2), rtol=0.0, atol=1e-14):
+            raise ValueError("The saved Figure 3 speed is inconsistent with velocity.")
+        for name in ("xi1_over_f", "xi2_over_f", "xi3_over_f"):
+            values = data[name]
+            if values.shape != expected_shape:
+                raise ValueError(f"{name} has inconsistent dimensions.")
+            require_finite(name, values)
+        if not np.allclose(data["xi2_over_f"][[0, 2]], 0.0, atol=1e-15):
+            raise ValueError("The shear and dipole normal strains must vanish.")
+    validate_metadata(ROOT / specification["metadata"])
 
 
 VALIDATORS: dict[str, Callable[[dict[str, Any]], None]] = {
@@ -261,6 +300,7 @@ VALIDATORS: dict[str, Callable[[dict[str, Any]], None]] = {
     "gaussian_vortex": validate_gaussian_vortex,
     "sinusoidal_dipole_error": validate_sinusoidal_dipole_error,
     "sinusoidal_dipole_wave": validate_sinusoidal_dipole_wave,
+    "background_flows": validate_background_flows,
 }
 
 
@@ -271,8 +311,28 @@ def load_script_module(name: str, path: Path) -> Any:
         raise ImportError(f"Could not load script module: {path}")
     module = importlib.util.module_from_spec(specification)
     sys.modules[name] = module
-    specification.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        specification.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
+
+
+def validate_polarisation_geometry(specification: dict[str, Any]) -> None:
+    """Validate the shared calculation data behind Figures 1 and 2."""
+    module = load_script_module(
+        "polarisation_geometry_compute",
+        ROOT
+        / "code"
+        / "polarisation_geometry"
+        / "compute_polarisation_trajectories.py",
+    )
+    metrics = module.validate_saved_outputs(
+        ROOT / specification["data"], ROOT / specification["metadata"]
+    )
+    if not metrics:
+        raise ValueError("No polarisation-geometry validation metrics were produced.")
 
 
 def validate_polarisation_geometry_movie(
@@ -380,6 +440,32 @@ def validate_polarisation_geometry_movie(
     )
 
 
+def validate_sinusoidal_dipole_movie(
+    specification: dict[str, Any],
+    *,
+    output_directory: Path | None,
+    data_only: bool,
+) -> None:
+    """Validate the Movie 2 numerical archive and, when requested, the MP4."""
+    input_path = ROOT / specification["data"]
+    module = load_script_module(
+        "sinusoidal_dipole_movie_validation",
+        ROOT / "code" / "sinusoidal_dipole" / "validate_wave_velocity_movie.py",
+    )
+    numerical = module.check_archive(input_path)
+    if data_only:
+        print(
+            "sinusoidal_dipole_movie: numerical validation passed "
+            f"({len(numerical)} checks)"
+        )
+        return
+    if output_directory is None:
+        raise ValueError(
+            "sinusoidal_dipole_movie validation requires --output-directory."
+        )
+    module.validate_product(input_path, output_directory)
+
+
 def validate_figures(specification: dict[str, Any]) -> None:
     """Require PNG and PDF output for every configured figure stem."""
     for relative_stem in specification.get("figure_stems", []):
@@ -399,8 +485,21 @@ def validate_workflow(
     """Validate one configured workflow."""
     workflow = load_workflow(name)
     specification = workflow["validation"]
+    if specification["type"] == "polarisation_geometry":
+        validate_polarisation_geometry(specification)
+        if not data_only:
+            validate_figures(specification)
+        print(f"{name}: validation passed")
+        return
     if specification["type"] == "polarisation_geometry_movie":
         validate_polarisation_geometry_movie(
+            specification,
+            output_directory=output_directory,
+            data_only=data_only,
+        )
+        return
+    if specification["type"] == "sinusoidal_dipole_movie":
+        validate_sinusoidal_dipole_movie(
             specification,
             output_directory=output_directory,
             data_only=data_only,

@@ -9,10 +9,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
+from specification import MODEL_NAMES, reference_metrics_from_config, validate_config
 from vertical_modes import validate_vertical_mode, vertical_wavelength
-
-
-MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
 
 
 def require(condition: bool, message: str) -> None:
@@ -64,16 +62,9 @@ def validate_all(
 ) -> dict[str, Any]:
     """Apply the manuscript-resolution regression and consistency checks."""
     physical = config["physical_parameters"]
-    numerical = config["numerical_parameters"]
     tolerance = config["validation_tolerances"]
-    require(
-        numerical["horizontal_grid"] == 128,
-        "Full reproduction requires a 128x128 horizontal grid.",
-    )
-    require(
-        numerical["time_steps_per_inertial_period"] == 64,
-        "Full reproduction requires 64 steps per inertial period.",
-    )
+    validate_config(config, manuscript_resolution=True)
+    references = reference_metrics_from_config(config)
 
     vertical_checks: dict[str, Any] = {}
     with h5py.File(simulation_path, "r") as handle:
@@ -107,6 +98,15 @@ def validate_all(
                 group.attrs["pse_initial_reconstruction_relative_l2"]
                 <= tolerance["initial_reconstruction_relative_l2"],
                 f"n={mode}: PSE initial field reconstruction failed.",
+            )
+            require(
+                group.attrs["pse_initialisation"]
+                == "frozen-local strain-only O(Ro)",
+                f"n={mode}: the PSE initialisation does not match the appendix.",
+            )
+            require(
+                group.attrs["pse_initial_iterations"] == 0,
+                f"n={mode}: the explicit PSE initialisation was iterated.",
             )
 
     statistics = pd.read_csv(error_path)
@@ -161,7 +161,7 @@ def validate_all(
         time_50 = int(np.flatnonzero(times == 50.0)[0])
         mode_4 = int(np.flatnonzero(modes == 4)[0])
         maxima = fields[time_50, mode_4].max(axis=(-2, -1))
-        reference = config["reference_values"]["n4_50ip_squared_velocity_maxima"]
+        reference = references["n4_50ip_squared_velocity_maxima"]
         expected = np.asarray([reference[name] for name in MODEL_NAMES])
         maximum_error = float(np.max(np.abs(maxima - expected)))
         require(

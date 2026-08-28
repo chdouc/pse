@@ -11,14 +11,11 @@ from typing import Any
 import h5py
 import numpy as np
 
+from specification import MODEL_NAMES, NRE_MODEL_NAMES, reference_metrics_from_config
 
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parent / "data" / "sinusoidal_dipole_movie_fields.npz"
 )
-MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
-NRE_MODEL_NAMES = MODEL_NAMES[:-1]
-VERTICAL_MODES = (4, 16, 32)
-FIXED_ABSOLUTE_LIMITS = {4: (0.01, 37.5), 16: (0.39, 1.61), 32: (0.88, 1.12)}
 
 
 def outward_significant(value: float, digits: int = 3) -> float:
@@ -53,11 +50,9 @@ def relative_l2(reference: np.ndarray, model: np.ndarray) -> float:
 def compute_archive(
     simulation_path: Path,
     *,
-    difference_quantile: float = 0.995,
+    difference_quantile: float | None = None,
 ) -> dict[str, np.ndarray]:
     """Build the movie archive without interpolation or external inputs."""
-    if not 0.5 < difference_quantile < 1.0:
-        raise ValueError("The difference quantile must lie between 0.5 and 1.")
     fields_by_mode: list[np.ndarray] = []
     nre_by_mode: list[np.ndarray] = []
     nre_times_by_mode: list[np.ndarray] = []
@@ -66,12 +61,23 @@ def compute_archive(
 
     with h5py.File(simulation_path, "r") as handle:
         config = json.loads(handle.attrs["config_json"])
+        references = reference_metrics_from_config(config)
+        movie_reference = references["movie2"]
+        vertical_modes = tuple(int(mode) for mode in movie_reference["vertical_modes"])
+        absolute_limit_map = {
+            int(mode): tuple(limits)
+            for mode, limits in movie_reference["absolute_color_limits"].items()
+        }
+        if difference_quantile is None:
+            difference_quantile = float(movie_reference["difference_quantile"])
+        if not 0.5 < difference_quantile < 1.0:
+            raise ValueError("The difference quantile must lie between 0.5 and 1.")
         physical = config["physical_parameters"]
         numerical = config["numerical_parameters"]
         amplitude = float(physical["initial_velocity_amplitude_m_s"])
         if tuple(json.loads(handle.attrs["model_names"])) != MODEL_NAMES:
             raise ValueError("The simulation archive model order changed.")
-        for mode in VERTICAL_MODES:
+        for mode in vertical_modes:
             group = handle[f"modes/n{mode:04d}"]
             field_times = np.asarray(group["field_times_ip"])
             expected_times = np.arange(51.0)
@@ -106,11 +112,11 @@ def compute_archive(
     nre_times = np.stack(nre_times_by_mode)
     differences = field_array[:, :, :4] - field_array[:, :, 4:5]
     absolute_limits = np.asarray(
-        [FIXED_ABSOLUTE_LIMITS[mode] for mode in VERTICAL_MODES]
+        [absolute_limit_map[mode] for mode in vertical_modes]
     )
     difference_limits: list[tuple[float, float]] = []
     clipping: dict[str, Any] = {}
-    for index, mode in enumerate(VERTICAL_MODES):
+    for index, mode in enumerate(vertical_modes):
         limit = outward_significant(
             float(np.quantile(np.abs(differences[index]), difference_quantile))
         )
@@ -143,7 +149,7 @@ def compute_archive(
         },
         "model_order": list(MODEL_NAMES),
         "nre_model_order": list(NRE_MODEL_NAMES),
-        "vertical_modes": list(VERTICAL_MODES),
+        "vertical_modes": list(vertical_modes),
         "time_units": "inertial periods",
         "field_quantity_tex": r"|\phi|^2/|\phi_{\mathrm{amp}}|^2",
         "difference_definition": "named model minus HBEs normalized squared velocity",
@@ -181,7 +187,7 @@ def compute_archive(
     return {
         "times_in_inertial_periods": np.arange(51.0),
         "source_time_indices": np.tile(np.arange(51), (3, 1)),
-        "vertical_modes": np.asarray(VERTICAL_MODES),
+        "vertical_modes": np.asarray(vertical_modes),
         "vertical_wavelengths_m": np.asarray(wavelengths),
         "model_names": np.asarray(MODEL_NAMES),
         "nre_model_names": np.asarray(NRE_MODEL_NAMES),
@@ -203,7 +209,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--difference-quantile", type=float, default=0.995)
+    parser.add_argument("--difference-quantile", type=float)
     return parser.parse_args()
 
 

@@ -16,6 +16,7 @@ import threading
 import time
 from typing import Any
 
+import h5py
 import psutil
 
 
@@ -26,11 +27,17 @@ sys.path.insert(0, str(SOURCE))
 from compute_error_statistics import compute_statistics  # noqa: E402
 from compute_movie_fields import compute_archive  # noqa: E402
 from compute_wave_velocity_fields import compute_fields  # noqa: E402
+from check_convergence import run_convergence  # noqa: E402
 from solver import create_simulation_file, load_config  # noqa: E402
+from specification import (  # noqa: E402
+    simulation_signature,
+    validate_config,
+)
 from validate_reproduction import validate_all, validate_smoke  # noqa: E402
 
 
 DEFAULT_CONFIG = ROOT / "config" / "reproduction.json"
+DEFAULT_CONVERGENCE_CONFIG = ROOT / "config" / "convergence.json"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "reproduction"
 
 
@@ -44,7 +51,7 @@ class PeakMemoryMonitor:
 
     def _run(self) -> None:
         process = psutil.Process()
-        while not self._stop.wait(0.25):
+        while True:
             processes = [process, *process.children(recursive=True)]
             total = 0
             for child in processes:
@@ -53,6 +60,8 @@ class PeakMemoryMonitor:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
             self.peak_bytes = max(self.peak_bytes, total)
+            if self._stop.wait(0.25):
+                break
 
     def start(self) -> None:
         self._thread.start()
@@ -99,6 +108,129 @@ def dependency_versions() -> dict[str, str]:
     return {name: importlib.metadata.version(name) for name in names}
 
 
+def repository_path(path: Path) -> str:
+    """Return a portable path label without recording a local absolute path."""
+    try:
+        return str(path.resolve().relative_to(ROOT)).replace("\\", "/")
+    except ValueError:
+        return f"external/{path.name}"
+
+
+def git_output(*arguments: str) -> str | None:
+    """Return Git output when metadata and the executable are available."""
+    try:
+        result = subprocess.run(
+            ["git", *arguments],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+    return result.stdout.rstrip() if result.returncode == 0 else None
+
+
+def source_inventory() -> list[dict[str, Any]]:
+    """Hash the repository files that define the reproduction."""
+    pathspecs = (
+        "code/common",
+        "code/gaussian_vortex",
+        "code/parallel_shear",
+        "code/polarisation_geometry",
+        "code/sinusoidal_dipole",
+        "code/background_flows",
+        "config",
+        "tests",
+        "workflows",
+        "reproduce.py",
+        "run_workflow.py",
+        "validate_outputs.py",
+        "requirements.txt",
+        "README.md",
+        "AUDIT.md",
+        "CITATION.cff",
+        ".gitignore",
+    )
+    git_files = git_output(
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        *pathspecs,
+    )
+    if git_files is not None:
+        relative_paths = sorted(line for line in git_files.splitlines() if line)
+    else:
+        relative_paths = []
+        excluded_parts = {"__pycache__", "data", "figures"}
+        for pathspec in pathspecs:
+            candidate = ROOT / pathspec
+            candidates = [candidate] if candidate.is_file() else candidate.rglob("*")
+            for path in candidates:
+                if not path.is_file() or path.suffix in {".pyc", ".pyo"}:
+                    continue
+                relative = path.relative_to(ROOT)
+                if excluded_parts.intersection(relative.parts):
+                    continue
+                relative_paths.append(str(relative))
+    records = []
+    for relative in sorted(set(relative_paths)):
+        path = ROOT / relative
+        if path.is_file():
+            records.append(
+                {
+                    "path": relative.replace("\\", "/"),
+                    "bytes": path.stat().st_size,
+                    "sha256": sha256_file(path),
+                }
+            )
+    return records
+
+
+def tree_snapshot(directory: Path) -> dict[str, tuple[int, int]]:
+    """Record output sizes and modification times before a run."""
+    if not directory.exists():
+        return {}
+    return {
+        str(path.relative_to(directory)): (path.stat().st_size, path.stat().st_mtime_ns)
+        for path in directory.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+
+
+def changed_files(
+    directory: Path,
+    before: dict[str, tuple[int, int]],
+) -> list[Path]:
+    """Return only files created or replaced by the current run."""
+    paths = []
+    for path in directory.rglob("*"):
+        if not path.is_file() or path.name == "manifest.json":
+            continue
+        relative = str(path.relative_to(directory))
+        state = (path.stat().st_size, path.stat().st_mtime_ns)
+        if before.get(relative) != state:
+            paths.append(path)
+    return sorted(paths)
+
+
+def validate_reusable_simulation(path: Path, config: dict[str, Any]) -> None:
+    """Reject a cached archive generated from different numerical inputs."""
+    expected = simulation_signature(config)
+    with h5py.File(path, "r") as handle:
+        stored = handle.attrs.get("simulation_signature_sha256")
+        if stored is None:
+            archived_config = json.loads(handle.attrs["config_json"])
+            stored = simulation_signature(archived_config)
+    if stored != expected:
+        raise ValueError(
+            "The cached simulation was generated from a different configuration; "
+            "rerun without --reuse-simulation."
+        )
+
+
 def write_manifest(
     output_directory: Path,
     *,
@@ -107,14 +239,14 @@ def write_manifest(
     config_path: Path,
     validation: dict[str, Any],
     peak_combined_memory_bytes: int,
+    outputs: list[Path],
+    inputs: list[Path],
+    additional_configurations: list[dict[str, str]],
 ) -> Path:
-    files = sorted(
-        path
-        for path in output_directory.rglob("*")
-        if path.is_file() and path.name != "manifest.json"
-    )
+    tracked_changes = git_output("status", "--porcelain", "--untracked-files=no")
+    git_commit = git_output("rev-parse", "HEAD")
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "command": command,
         "runtime_seconds": time.perf_counter() - started,
         "peak_combined_resident_memory_bytes": peak_combined_memory_bytes,
@@ -126,17 +258,39 @@ def write_manifest(
             "dependencies": dependency_versions(),
         },
         "configuration": {
-            "file": str(config_path.relative_to(ROOT)),
+            "source": repository_path(config_path),
+            "snapshot": "config_used.json",
             "sha256": sha256_file(config_path),
+            "additional": additional_configurations,
+        },
+        "source_provenance": {
+            "git_repository_available": git_commit is not None,
+            "git_commit": git_commit,
+            "tracked_worktree_clean": (
+                None if tracked_changes is None else not bool(tracked_changes)
+            ),
+            "tracked_changes": (
+                [] if tracked_changes is None else tracked_changes.splitlines()
+            ),
+            "files": source_inventory(),
         },
         "validation": validation,
+        "inputs": [
+            {
+                "path": repository_path(path),
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
+            for path in inputs
+            if path.is_file()
+        ],
         "outputs": [
             {
                 "path": str(path.relative_to(output_directory)).replace("\\", "/"),
                 "bytes": path.stat().st_size,
                 "sha256": sha256_file(path),
             }
-            for path in files
+            for path in outputs
         ],
     }
     path = output_directory / "manifest.json"
@@ -186,6 +340,7 @@ def reproduce_all(
             raise FileNotFoundError(
                 "--reuse-simulation requires an existing data/simulation.h5."
             )
+        validate_reusable_simulation(simulation_path, config)
     else:
         create_simulation_file(
             simulation_path,
@@ -301,7 +456,13 @@ def parse_args() -> argparse.Namespace:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--all", action="store_true")
     action.add_argument("--smoke-test", action="store_true")
+    action.add_argument("--convergence-test", action="store_true")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--convergence-config",
+        type=Path,
+        default=DEFAULT_CONVERGENCE_CONFIG,
+    )
     parser.add_argument("--output-directory", type=Path)
     parser.add_argument("--workers", type=int, default=min(3, os.cpu_count() or 1))
     parser.add_argument(
@@ -319,23 +480,59 @@ def main() -> None:
     args = parse_args()
     if args.workers < 1:
         raise ValueError("--workers must be positive.")
-    if args.smoke_test and args.reuse_simulation:
+    if not args.all and args.reuse_simulation:
         raise ValueError("--reuse-simulation applies only to --all.")
     config_path = args.config.resolve()
     config = load_config(config_path)
+    validate_config(config, manuscript_resolution=not args.smoke_test)
     output_directory = (
         args.output_directory.resolve()
         if args.output_directory
-        else DEFAULT_OUTPUT / ("smoke-test" if args.smoke_test else "full")
+        else DEFAULT_OUTPUT
+        / (
+            "smoke-test"
+            if args.smoke_test
+            else "convergence" if args.convergence_test else "full"
+        )
     )
     output_directory.mkdir(parents=True, exist_ok=True)
+    before = tree_snapshot(output_directory)
+    config_snapshot = output_directory / "config_used.json"
+    config_snapshot.write_text(
+        json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     started = time.perf_counter()
     memory_monitor = PeakMemoryMonitor()
     memory_monitor.start()
     command = " ".join([Path(sys.executable).name, Path(__file__).name, *sys.argv[1:]])
+    validation: dict[str, Any] = {"status": "running"}
+    additional_configurations: list[dict[str, str]] = []
+    failure: BaseException | None = None
     try:
         if args.smoke_test:
             validation = smoke_test(config, output_directory)
+        elif args.convergence_test:
+            convergence_config_path = args.convergence_config.resolve()
+            convergence_config = json.loads(
+                convergence_config_path.read_text(encoding="utf-8")
+            )
+            convergence_snapshot = output_directory / "convergence_config_used.json"
+            convergence_snapshot.write_text(
+                json.dumps(convergence_config, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            additional_configurations.append(
+                {
+                    "source": repository_path(convergence_config_path),
+                    "snapshot": convergence_snapshot.name,
+                    "sha256": sha256_file(convergence_config_path),
+                }
+            )
+            validation = run_convergence(
+                config,
+                convergence_config,
+                output_directory / "data",
+            )
         else:
             validation = reproduce_all(
                 config,
@@ -343,8 +540,21 @@ def main() -> None:
                 workers=args.workers,
                 reuse_simulation=args.reuse_simulation,
             )
+    except BaseException as error:
+        failure = error
+        validation = {
+            "status": "failed",
+            "error_type": type(error).__name__,
+            "message": str(error),
+        }
     finally:
         peak_memory = memory_monitor.stop()
+    outputs = changed_files(output_directory, before)
+    reused_inputs = (
+        [output_directory / "data" / "simulation.h5"]
+        if args.reuse_simulation
+        else []
+    )
     manifest = write_manifest(
         output_directory,
         command=command,
@@ -352,7 +562,14 @@ def main() -> None:
         config_path=config_path,
         validation=validation,
         peak_combined_memory_bytes=peak_memory,
+        outputs=outputs,
+        inputs=reused_inputs,
+        additional_configurations=additional_configurations,
     )
+    if failure is not None:
+        print(f"validation: failed ({type(failure).__name__}: {failure})")
+        print(f"manifest: {manifest}")
+        raise failure.with_traceback(failure.__traceback__)
     print(f"validation: {validation['status']}")
     print(f"manifest: {manifest}")
 

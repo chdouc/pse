@@ -2,67 +2,75 @@
 
 ## Scope
 
-The audit covered every version-controlled workflow, calculation script,
-plotting script, movie script and documentation file. It specifically traced
-the provenance of the data used by Figures 8--10, Movie 2 and their NRE
-statistics.
+The audit traced every version-controlled calculation, plotting and movie
+workflow. It checked the provenance of Figures 1--10, Movies 1--2 and the NRE
+statistics, with detailed attention to the data previously used by Figures
+8--10 and Movie 2.
 
-## Findings before the revision
+## Removed dependencies
 
-| Item | Previous state | Reproducibility gap |
+| Item | State before the revision | Repository replacement |
 | --- | --- | --- |
-| Figure 8 statistics | Read error curves from a user-supplied CSV index and MATLAB v7.3 files | The equations and time integration that produced the curves were absent |
-| Figures 9--10 fields | Read precomputed complex fields through `data_mat` entries | Results could not be regenerated without private simulation output |
-| Movie 2 | Read processed full-field files from an external sweep directory | The movie depended on private paths and precomputed fields |
-| Paths | Index entries could contain absolute paths | Commands were machine-specific |
-| Parameters | Grid and time-step checks were applied only after loading external files | No repository-owned calculation enforced the manuscript resolution |
-| Dependencies | Lower version bounds were used | Environments were not exactly repeatable |
-| Validation | Selected values were checked only after external data extraction | A missing or changed generation step could not be identified |
-| Run record | No single manifest covered calculation, figures and movie | Runtime, memory, output inventory and checksums were incomplete |
-| Plotting colour table | A 256-entry MATLAB colour table was stored in `code/common` | This is a version-controlled rendering asset, not simulation data; it is retained so eigenanalysis plots remain self-contained |
+| Figure 8 | CSV index pointing to MATLAB v7.3 error files | Five-model integrations and repository-generated NRE table |
+| Figures 9--10 | `data_mat` entries pointing to complex fields | Saved fields from `simulation.h5` |
+| Movie 2 | Processed arrays in an external sweep directory | Movie archive generated from `simulation.h5` |
+| File paths | Absolute paths allowed in indexes | Paths resolved from the repository or a user-selected output directory |
+| Parameters | Checks applied after private files were read | Validated manuscript configuration before integration |
+| Environment | Dependency lower bounds | Exact package versions in `requirements.txt` |
+| Run record | Separate, incomplete logs | One manifest with source provenance, resource use and checksums |
 
-No observational dataset is required by these manuscript cases. The missing
-inputs were privately generated numerical results rather than research data.
+No observational dataset is used by these cases. The unavailable inputs were
+private numerical outputs. The revision replaces them with the equations,
+analytic initial conditions and parameter files that generate those outputs.
 
-The parallel-shear and Gaussian-vortex eigensolvers and the
-polarisation-geometry calculation were already generated from analytic inputs
-inside the repository. Their only binary input is the bundled colour table
-listed above; none reads a numerical research dataset.
+The retained 256-entry colour table in `code/common` is a rendering asset for
+the eigenanalysis figures. It is version controlled and is not numerical
+research data.
 
-## Resolution
+## Generation chain
 
-- `code/sinusoidal_dipole/solver.py` now contains the modal HBE, YBJ, TSB,
-  YBJ+ and PSE integrations, the sinusoidal-dipole background flow, analytic
-  initial condition, Fourier grid and two-thirds projector.
-- `config/reproduction.json` is the single source of physical parameters,
-  numerical parameters, seed, saved times and validation tolerances.
-- `reproduce.py` generates the HDF5 simulation archive before creating any
-  statistic, figure or movie input.
-- The three product scripts accept only that repository-generated HDF5 file.
-  CSV indexes, `data_mat`, private directory discovery and MATLAB-file readers
-  were removed.
-- The vertical mode is explicitly `cos(n*pi*z/H)`, with `h=2H/n`, no internal
-  normalization and a physical reconstruction factor of one.
-- Automated tests cover the Neumann conditions, zero vertical mean, wavelength
-  mapping, deterministic integration and initial PSE reconstruction.
-- Full validation checks NRE, field maxima and pointwise model differences
-  against version-controlled tolerances and fails immediately on disagreement.
-- Dependency versions are pinned, and every run writes environment, runtime,
-  peak-memory, output-inventory and checksum records.
+`code/sinusoidal_dipole/solver.py` integrates the modal HBE, YBJ, TSB, YBJ+
+and PSE systems in the sinusoidal-dipole flow. `reproduce.py` creates the HDF5
+archive before any statistics, figures or movie arrays are computed. The
+downstream scripts accept that archive as their sole numerical input.
 
-## Generated files and caches
+The PSE initialization implements the frozen-local, strain-only `O(Ro)`
+formula in the manuscript appendix. HDF5 attributes record the formula, mode
+normalization, numerical choices, full configuration and the configuration
+signature used for cache-reuse checks.
 
-Everything below `artifacts/` is generated. It may be removed in full without
-losing a source input. A clean `python reproduce.py --all` run reconstructs
-the data, figures and Movie 2 from the version-controlled equations and
-configuration.
+Figures 1--2 and Movie 1 share one analytic polarisation-geometry calculation.
+Figure 3 is generated from analytic expressions for the parallel shear,
+Gaussian vortex and sinusoidal dipole. The Figure 4--7 eigenanalysis workflows
+start from analytic background flows and solve their matrix eigenproblems in
+the repository.
 
-## Remaining limitations
+## Checks
 
-- Floating-point roundoff and rendering fonts can differ slightly across
-  operating systems. Numerical tolerances are wider than roundoff but narrow
-  enough to detect a changed solution.
-- The 128-by-128, 50-period calculation is intentionally compute intensive.
-  The manifest from each run records the actual cost on that machine.
-- The MP4 renderer uses the H.264 encoder bundled with the pinned
-  `imageio-ffmpeg` package when a system FFmpeg installation is unavailable.
+The automated checks cover:
+
+- rigid-lid and flat-bottom Neumann conditions, zero vertical mean,
+  `h=2H/n` and a unit reconstruction factor;
+- deterministic integration and exact PSE initial reconstruction;
+- configuration validation and rejection of an incompatible cached archive;
+- NRE ranges, field maxima and a pointwise PSE--HBE field difference;
+- consistency between saved complex fields and step-resolved NRE curves;
+- spatial and temporal refinement through `python reproduce.py
+  --convergence-test`;
+- H.264 movie encoding, complete decoding and representative-frame checks.
+
+Measured regression values are stored in `config/reference_metrics.json`.
+Acceptance tolerances and simulation parameters are stored in
+`config/reproduction.json`. Keeping these roles separate makes changes to a
+target or a tolerance visible in version control.
+
+## Caches and known variability
+
+Everything below `artifacts/` is generated and may be deleted. A clean run can
+reconstruct each listed output without a research-data download.
+
+Floating-point roundoff can vary across operating systems and numerical
+libraries. Rendering fonts can also differ. The numerical tolerances allow
+roundoff while still rejecting a changed solution. The MP4 renderer uses the
+H.264 encoder bundled with the pinned `imageio-ffmpeg` package when a system
+FFmpeg executable is unavailable.

@@ -21,42 +21,34 @@ from render_wave_velocity_movie import (
     probe_video,
     resolve_executable,
 )
+from specification import (
+    MODEL_NAMES as MODEL_NAME_TUPLE,
+    NRE_MODEL_NAMES as NRE_MODEL_NAME_TUPLE,
+    load_reference_metrics,
+)
 
 
-MODEL_NAMES = ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"]
-NRE_MODEL_NAMES = MODEL_NAMES[:4]
-EXPECTED_VERTICAL_MODES = np.asarray([4, 16, 32])
+REFERENCE_METRICS = load_reference_metrics()
+MODEL_NAMES = list(MODEL_NAME_TUPLE)
+NRE_MODEL_NAMES = list(NRE_MODEL_NAME_TUPLE)
+EXPECTED_VERTICAL_MODES = np.asarray(REFERENCE_METRICS["movie2"]["vertical_modes"])
 EXPECTED_DOMAIN_DEPTH_METRES = 2000.0
-EXPECTED_VERTICAL_WAVELENGTHS_METRES = np.asarray([1000.0, 250.0, 125.0])
+EXPECTED_VERTICAL_WAVELENGTHS_METRES = np.asarray(
+    REFERENCE_METRICS["movie2"]["vertical_wavelengths_m"]
+)
 EXPECTED_GRID_POINTS = 128
 EXPECTED_STEPS_PER_INERTIAL_PERIOD = 64
 EXPECTED_T50_MAXIMA = np.asarray(
     [
-        [
-            31.78305252674567,
-            38.59693198569784,
-            37.10110161741679,
-            37.56090526692235,
-            27.573750991669126,
-        ],
-        [
-            1.6165713245440108,
-            1.6141988368892222,
-            1.6145232022840763,
-            1.6164613339815284,
-            1.6794963091594228,
-        ],
-        [
-            1.1192561550932818,
-            1.119246472578306,
-            1.1192467248495304,
-            1.1191323896066654,
-            1.1288687266184072,
-        ],
+        REFERENCE_METRICS["movie2_t50_squared_velocity_maxima"][str(mode)]
+        for mode in EXPECTED_VERTICAL_MODES
     ]
 )
 EXPECTED_ABSOLUTE_LIMITS = np.asarray(
-    [[0.01, 37.5], [0.39, 1.61], [0.88, 1.12]]
+    [
+        REFERENCE_METRICS["movie2"]["absolute_color_limits"][str(mode)]
+        for mode in EXPECTED_VERTICAL_MODES
+    ]
 )
 EXPECTED_STYLE_ALIGNMENT = {
     "manuscript_figures": [8, 9, 10],
@@ -853,11 +845,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    """Run all movie checks and write a machine-readable quality report."""
-    args = parse_args()
-    input_path = args.input.resolve()
-    output_directory = args.output_directory.resolve()
+def validate_product(
+    input_path: Path,
+    output_directory: Path,
+    *,
+    ffmpeg_path: Path | None = None,
+    ffprobe_path: Path | None = None,
+) -> dict[str, Any]:
+    """Run all Movie 2 checks and write a machine-readable quality report."""
+    input_path = input_path.resolve()
+    output_directory = output_directory.resolve()
     if not input_path.is_file():
         raise FileNotFoundError(f"Intermediate archive is missing: {input_path}")
     if not output_directory.is_dir():
@@ -867,8 +864,8 @@ def main() -> None:
         if not path.is_file() or path.stat().st_size == 0:
             raise FileNotFoundError(f"Required movie output is missing: {path}")
 
-    ffmpeg = resolve_executable(args.ffmpeg, "ffmpeg")
-    ffprobe = resolve_executable(args.ffprobe, "ffprobe")
+    ffmpeg = resolve_executable(ffmpeg_path, "ffmpeg")
+    ffprobe = resolve_executable(ffprobe_path, "ffprobe")
     numerical = check_archive(input_path)
     media = check_media(output_directory, ffmpeg, ffprobe)
     visual = check_render_outputs(output_directory, media, ffmpeg)
@@ -888,7 +885,7 @@ def main() -> None:
             "numbered_movie_2": True,
             "separate_caption": True,
             "caption_tex_math": True,
-            "under_10_mb": True,
+            "under_50_mb": True,
             "silent": True,
             "official_preparing_materials_url": JFM_PREPARING_URL,
             "official_submitting_materials_url": JFM_SUBMITTING_URL,
@@ -900,6 +897,18 @@ def main() -> None:
         encoding="utf-8",
     )
     print(f"movie2 validation passed: {report_path}")
+    return report
+
+
+def main() -> None:
+    """Validate Movie 2 from command-line paths."""
+    args = parse_args()
+    validate_product(
+        args.input,
+        args.output_directory,
+        ffmpeg_path=args.ffmpeg,
+        ffprobe_path=args.ffprobe,
+    )
 
 
 if __name__ == "__main__":

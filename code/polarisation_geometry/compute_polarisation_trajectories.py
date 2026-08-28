@@ -423,6 +423,13 @@ def build_dataset(sample_count: int, fast_phase_count: int) -> dict[str, np.ndar
         initial_lambda,
         initial_gamma,
     )
+    figure1_gamma = np.pi / 4.0
+    figure1_spinor = spinor_from_angles(
+        1.0,
+        initial_varphi,
+        initial_lambda,
+        figure1_gamma,
+    )
 
     unit_progress = np.linspace(0.0, 1.0, sample_count)
     landmark_varphi = np.linspace(np.pi / 2.0, -np.pi / 2.0, sample_count)
@@ -478,6 +485,12 @@ def build_dataset(sample_count: int, fast_phase_count: int) -> dict[str, np.ndar
         "initial_varphi": np.asarray(initial_varphi),
         "initial_lambda": np.asarray(initial_lambda),
         "initial_gamma": np.asarray(initial_gamma),
+        "figure1_spinor": figure1_spinor,
+        "figure1_stokes": stokes_from_spinor(figure1_spinor),
+        "figure1_varphi": np.asarray(initial_varphi),
+        "figure1_lambda": np.asarray(initial_lambda),
+        "figure1_gamma": np.asarray(figure1_gamma),
+        "figure1_hodograph": hodograph_from_spinor(figure1_spinor, fast_phase),
         "landmark_varphi": landmark_varphi,
         "landmark_lambda": np.full(sample_count, initial_lambda),
         "landmark_gamma": np.full(sample_count, initial_gamma),
@@ -585,6 +598,12 @@ def metadata_from_dataset(
                 "orientation": "lambda advances by 2 pi; varphi and gamma are fixed",
                 "common_phase": "gamma advances by 2 pi; Stokes vector is fixed",
             },
+        },
+        "figure_1": {
+            "stokes_magnitude": 1.0,
+            "varphi_radians": float(arrays["figure1_varphi"]),
+            "lambda_radians": float(arrays["figure1_lambda"]),
+            "gamma_radians": float(arrays["figure1_gamma"]),
         },
         "chapter_2": {
             "evolution": "d|A>/dt = +/- f tau |A>/50",

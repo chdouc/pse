@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "name": "polarisation_geometry",
+  "description": "Poincare-sphere mapping and matrix-basis actions in Figures 1 and 2.",
+  "background_flow": "local polarisation geometry (no background-flow simulation)",
+  "figures": [1, 2],
+  "steps": [
+    {
+      "name": "compute_polarisation_trajectories",
+      "kind": "compute",
+      "script": "code/polarisation_geometry/compute_polarisation_trajectories.py",
+      "arguments": {
+        "output_directory": "artifacts/polarisation_geometry/data",
+        "sample_count": 481,
+        "fast_phase_count": 361
+      }
+    },
+    {
+      "name": "plot_polarisation_figures",
+      "kind": "plot",
+      "script": "code/polarisation_geometry/plot_polarisation_figures.py",
+      "arguments": {
+        "input": "artifacts/polarisation_geometry/data/movie1_data.npz",
+        "output_directory": "artifacts/polarisation_geometry/figures"
+      }
+    }
+  ],
+  "validation": {
+    "type": "polarisation_geometry",
+    "data": "artifacts/polarisation_geometry/data/movie1_data.npz",
+    "metadata": "artifacts/polarisation_geometry/data/movie1_metadata.json",
+    "figure_stems": [
+      "artifacts/polarisation_geometry/figures/polarisation_geometry",
+      "artifacts/polarisation_geometry/figures/matrix_basis_actions"
+    ]
+  }
+}

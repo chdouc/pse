@@ -19,7 +19,7 @@
     },
     {
       "name": "render_polarisation_movie",
-      "kind": "plot",
+      "kind": "render",
       "script": "code/polarisation_geometry/render_polarisation_movie.py",
       "supports_no_tex": true,
       "arguments": {
