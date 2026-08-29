@@ -172,11 +172,11 @@ def plot_figure(input_path: Path, output_stem: Path) -> None:
 
         if speed_image is None or invariant_image is None:
             raise RuntimeError("The background-flow images were not created.")
-        speed_bar_axis = figure.add_axes([0.085, 0.075, 0.168, 0.018])
+        speed_bar_axis = figure.add_axes((0.085, 0.075, 0.168, 0.018))
         speed_bar = figure.colorbar(speed_image, cax=speed_bar_axis, orientation="horizontal")
         speed_bar.set_ticks([0.0, 0.5, 1.0])
         speed_bar.ax.tick_params(length=2.5, pad=2)
-        invariant_bar_axis = figure.add_axes([0.347, 0.075, 0.605, 0.018])
+        invariant_bar_axis = figure.add_axes((0.347, 0.075, 0.605, 0.018))
         invariant_bar = figure.colorbar(
             invariant_image, cax=invariant_bar_axis, orientation="horizontal"
         )

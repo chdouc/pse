@@ -47,6 +47,24 @@ def validate_metadata(path: Path) -> dict[str, Any]:
     return metadata
 
 
+def validate_vertical_mode_metadata(
+    metadata: dict[str, Any],
+    reference: dict[str, Any],
+) -> None:
+    """Require the manuscript vertical-mode definition in saved metadata."""
+    expected = {
+        "domain_depth_m": reference["domain_depth_m"],
+        "vertical_wavelength_m": reference["vertical_wavelength_m"],
+        "normalisation": "unnormalised",
+        "physical_reconstruction_factor": 1.0,
+    }
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            raise ValueError(f"Vertical-mode metadata changed: {key}.")
+    if metadata.get("vertical_mode_definition") != "Z_n(z) = cos(n*pi*z/H)":
+        raise ValueError("The vertical-mode definition is missing or inconsistent.")
+
+
 def validate_parallel_shear(specification: dict[str, Any]) -> None:
     """Validate the parallel-shear eigenanalysis archive."""
     path = ROOT / specification["data"]
@@ -64,6 +82,7 @@ def validate_parallel_shear(specification: dict[str, Any]) -> None:
         "overlay_ratios",
         "overlay_branch_indices",
     }
+    reference = REFERENCE_METRICS["parallel_shear_figure5"]
     with np.load(path) as data:
         require_keys(data.files, required, path.name)
         along_stream = data["along_stream_spectrum"]
@@ -108,7 +127,25 @@ def validate_parallel_shear(specification: dict[str, Any]) -> None:
         ):
             require_finite(name, values)
 
-    validate_metadata(ROOT / specification["metadata"])
+        expected_wavenumbers = np.asarray(reference["wavenumbers_k_y_L"])
+        if not np.array_equal(wavenumbers, expected_wavenumbers):
+            raise ValueError("The Figure 5 along-stream wavenumbers changed.")
+        normalized_frequencies = frequencies.real / 1.0e-4
+        expected_frequencies = np.asarray(reference["frequencies_over_f"])
+        if not np.allclose(
+            normalized_frequencies,
+            expected_frequencies,
+            rtol=0.0,
+            atol=reference["absolute_tolerance"],
+        ):
+            raise ValueError("The Figure 5 branch frequencies changed.")
+        if not np.all(np.diff(normalized_frequencies, axis=1) > 0.0):
+            raise ValueError("The Figure 5 branches are not in increasing-frequency order.")
+
+    metadata = validate_metadata(ROOT / specification["metadata"])
+    if metadata.get("vertical_mode") != reference["vertical_mode"]:
+        raise ValueError("The parallel-shear vertical mode changed.")
+    validate_vertical_mode_metadata(metadata, reference)
 
 
 def validate_gaussian_vortex(specification: dict[str, Any]) -> None:
@@ -128,6 +165,7 @@ def validate_gaussian_vortex(specification: dict[str, Any]) -> None:
         "mode_component_up",
         "mode_component_down",
     }
+    reference = REFERENCE_METRICS["gaussian_vortex_figure7"]
     with np.load(path) as data:
         require_keys(data.files, required, path.name)
         for name in ("vertical_mode_spectrum", "azimuthal_spectrum"):
@@ -160,13 +198,24 @@ def validate_gaussian_vortex(specification: dict[str, Any]) -> None:
         ):
             require_finite(name, values)
 
-        if np.array_equal(wavenumbers, np.array([0, 1, 2, 3])):
-            expected = np.array([-0.10078016, -0.17202856, -0.22812337, -0.27251197])
+        expected_wavenumbers = np.asarray(reference["azimuthal_wavenumbers"])
+        if np.array_equal(wavenumbers, expected_wavenumbers):
+            expected = np.asarray(reference["frequencies_over_f"])
             normalized = frequencies.real / 1.0e-4
-            if not np.allclose(normalized, expected, rtol=0.0, atol=5.0e-6):
+            if not np.allclose(
+                normalized,
+                expected,
+                rtol=0.0,
+                atol=reference["absolute_tolerance"],
+            ):
                 raise ValueError("The selected Gaussian-vortex frequencies changed.")
+        else:
+            raise ValueError("The selected Gaussian-vortex azimuthal modes changed.")
 
-    validate_metadata(ROOT / specification["metadata"])
+    metadata = validate_metadata(ROOT / specification["metadata"])
+    if metadata.get("selected_mode_vertical_mode") != reference["vertical_mode"]:
+        raise ValueError("The Gaussian-vortex vertical mode changed.")
+    validate_vertical_mode_metadata(metadata, reference)
 
 
 def validate_sinusoidal_dipole_error(specification: dict[str, Any]) -> None:
@@ -481,10 +530,18 @@ def validate_workflow(
     *,
     data_only: bool,
     output_directory: Path | None = None,
+    artifact_root: Path | None = None,
 ) -> None:
     """Validate one configured workflow."""
-    workflow = load_workflow(name)
+    workflow = load_workflow(name, artifact_root=artifact_root)
     specification = workflow["validation"]
+    if specification.get("uses_output_directory") and output_directory is None:
+        configured_directory = workflow.get("default_output_directory")
+        if configured_directory is None:
+            raise ValueError(f"Workflow {name!r} has no default output directory.")
+        output_directory = Path(configured_directory)
+        if not output_directory.is_absolute():
+            output_directory = ROOT / output_directory
     if specification["type"] == "polarisation_geometry":
         validate_polarisation_geometry(specification)
         if not data_only:
@@ -531,7 +588,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-directory",
         type=Path,
-        help="External artifact directory used by movie workflows.",
+        help="Artifact directory override for one movie workflow.",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        help="Root used to remap configured artifacts/... paths.",
     )
     return parser.parse_args()
 
@@ -539,12 +601,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Validate one workflow or all configured workflows."""
     args = parse_args()
+    if args.workflow == "all" and args.output_directory is not None:
+        raise ValueError(
+            "--output-directory cannot be combined with 'all'; "
+            "each movie workflow uses its configured default directory."
+        )
     names = workflow_names() if args.workflow == "all" else [args.workflow]
     for name in names:
         validate_workflow(
             name,
             data_only=args.data_only,
             output_directory=args.output_directory,
+            artifact_root=(
+                args.artifact_root.resolve()
+                if args.artifact_root is not None
+                else None
+            ),
         )
 
 

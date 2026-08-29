@@ -9,15 +9,25 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 
 
-CORIOLIS_FREQUENCY = 1.0e-4
-BUOYANCY_FREQUENCY = 20.0 * CORIOLIS_FREQUENCY
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.paper_parameters import (  # noqa: E402
+    BUOYANCY_FREQUENCY,
+    CORIOLIS_FREQUENCY,
+    DOMAIN_DEPTH,
+    FLOW_SPEED,
+    vertical_mode_wavenumber,
+    vertical_wavelength,
+)
+
 FLOW_LENGTH = 10.0e3
-FLOW_SPEED = 0.25
-DOMAIN_DEPTH = 4000.0
 DEFAULT_VERTICAL_MODE = 4
 
 SIGMA_0 = np.array([[1, 0], [0, 1]], dtype=complex)
@@ -101,7 +111,7 @@ def solve_eigensystem(
     vertical_mode: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Solve and sort one parallel-shear eigensystem by complex frequency."""
-    vertical_wavenumber = vertical_mode * np.pi / DOMAIN_DEPTH
+    vertical_wavenumber = vertical_mode_wavenumber(vertical_mode)
     matrix = assemble_parallel_shear_matrix(
         wavenumber_y,
         truncation=truncation,
@@ -288,7 +298,9 @@ def display_indices(
     )
     if len(representatives) < selected_count:
         raise ValueError("Fewer eigenmode representatives were found than requested.")
-    return representatives[:selected_count][::-1][skip_count:]
+    selected = representatives[:selected_count]
+    retained_count = selected_count - skip_count
+    return selected[:retained_count]
 
 
 def compute_eigenfunction_overlays(
@@ -405,7 +417,7 @@ def save_results(
         output_path,
         along_stream_spectrum=along_stream_spectrum,
         vertical_mode_spectrum=vertical_mode_spectrum,
-        **overlays,
+        **overlays,  # type: ignore[arg-type]
     )
     output_path.with_suffix(".json").write_text(
         json.dumps(metadata, indent=2),
@@ -491,6 +503,10 @@ def main() -> None:
         "flow_length_m": FLOW_LENGTH,
         "flow_speed_m_s-1": FLOW_SPEED,
         "domain_depth_m": DOMAIN_DEPTH,
+        "vertical_mode_definition": "Z_n(z) = cos(n*pi*z/H)",
+        "vertical_wavelength_m": vertical_wavelength(args.vertical_mode),
+        "normalisation": "unnormalised",
+        "physical_reconstruction_factor": 1.0,
         "fourier_truncation": args.truncation,
         "vertical_mode": args.vertical_mode,
         "fixed_wavenumber_k_y_L": args.fixed_wavenumber,

@@ -29,15 +29,15 @@ archive plus JSON metadata.
 and high-resolution PNG versions of Figures 1 and 2.
 
 `render_polarisation_movie.py` reads those saved states. It does not repeat the
-physical calculation. It uses fixed camera views and axis limits, renders the
-two movie chapters, encodes MP4/H.264/yuv420p video, verifies the encoded
+physical calculation. It uses fixed camera views and axis limits, renders all
+three movie chapters, encodes MP4/H.264/yuv420p video, verifies the encoded
 stream, and writes the caption, accessibility description and submission
 notes.
 
 Create and validate Figures 1--2 from the repository root:
 
 ```bash
-python run_workflow.py polarisation_geometry --validate
+python run_workflow.py polarisation_geometry --no-tex --validate
 ```
 
 Create and validate Movie 1:
@@ -45,6 +45,7 @@ Create and validate Movie 1:
 ```bash
 python run_workflow.py polarisation_geometry_movie \
   --output-directory path/to/movies \
+  --no-tex \
   --validate
 ```
 
@@ -57,7 +58,8 @@ python run_workflow.py polarisation_geometry_movie \
 
 python run_workflow.py polarisation_geometry_movie \
   --output-directory path/to/movies \
-  --stage render
+  --stage render \
+  --no-tex
 ```
 
 The output directory is always supplied at run time. No manuscript path is

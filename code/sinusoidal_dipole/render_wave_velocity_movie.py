@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import argparse
 from fractions import Fraction
-import hashlib
 import json
 import math
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from typing import Any
 
@@ -28,8 +28,17 @@ import imageio_ffmpeg
 import numpy as np
 from PIL import Image
 
-from plot_wave_velocity_fields import publication_style
-from specification import load_reference_metrics
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.files import sha256_file  # noqa: E402
+from common.video import mp4_has_faststart  # noqa: E402
+from plot_wave_velocity_fields import publication_style  # noqa: E402
+from specification import (  # noqa: E402
+    PAPER_PHYSICAL_PARAMETERS,
+    load_reference_metrics,
+)
 
 
 DEFAULT_INPUT = (
@@ -37,9 +46,11 @@ DEFAULT_INPUT = (
     / "data"
     / "sinusoidal_dipole_movie_fields.npz"
 )
-MAX_FILE_BYTES = int(load_reference_metrics()["movie2"]["maximum_file_bytes"])
-EXPECTED_VERTICAL_MODES = (4, 16, 32)
-DOMAIN_DEPTH_METRES = 2000
+REFERENCE_METRICS = load_reference_metrics()
+MOVIE_REFERENCE = REFERENCE_METRICS["movie2"]
+MAX_FILE_BYTES = int(MOVIE_REFERENCE["maximum_file_bytes"])
+EXPECTED_VERTICAL_MODES = tuple(int(mode) for mode in MOVIE_REFERENCE["vertical_modes"])
+DOMAIN_DEPTH_METRES = int(PAPER_PHYSICAL_PARAMETERS["domain_depth_m"])
 PREFERRED_TEXT_FONT = "Times New Roman"
 MOVIE_FONT_STACK = (
     PREFERRED_TEXT_FONT,
@@ -47,11 +58,13 @@ MOVIE_FONT_STACK = (
     "STIXGeneral",
     "DejaVu Serif",
 )
-VERTICAL_WAVELENGTH_METRES = {
-    4: 1000,
-    16: 250,
-    32: 125,
-}
+VERTICAL_WAVELENGTH_METRES = dict(
+    zip(
+        EXPECTED_VERTICAL_MODES,
+        (float(value) for value in MOVIE_REFERENCE["vertical_wavelengths_m"]),
+        strict=True,
+    )
+)
 MODEL_STYLES = (
     ("YBJ", "#002BFF", "o", "-"),
     ("TSB", "#7A3E9D", "^", "--"),
@@ -83,15 +96,6 @@ CAMBRIDGE_SUPPLEMENT_URL = (
     "https://www.cambridge.org/core/services/authors/"
     "publishing-supplementary-material"
 )
-
-
-def sha256_file(path: Path) -> str:
-    """Return a streaming SHA-256 digest."""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def parse_resolution(value: str) -> tuple[int, int]:
@@ -441,10 +445,10 @@ class ChapterRenderer:
         top_position = self.axes[0, -1].get_position()
         bottom_position = self.axes[1, -2].get_position()
         absolute_cax = self.figure.add_axes(
-            [0.938, top_position.y0, 0.010, top_position.height]
+            (0.938, top_position.y0, 0.010, top_position.height)
         )
         difference_cax = self.figure.add_axes(
-            [0.938, bottom_position.y0, 0.010, bottom_position.height]
+            (0.938, bottom_position.y0, 0.010, bottom_position.height)
         )
         absolute_colorbar = self.figure.colorbar(
             self.absolute_images[-1],
@@ -467,7 +471,7 @@ class ChapterRenderer:
             rotation=90,
             labelpad=8.0,
         )
-        absolute_colorbar.outline.set_linewidth(1.0)
+        absolute_colorbar.outline.set_linewidth(1.0)  # type: ignore[operator]
         absolute_colorbar.ax.tick_params(width=0.8, length=3.0, pad=3.0)
 
         difference_colorbar = self.figure.colorbar(
@@ -494,7 +498,7 @@ class ChapterRenderer:
             rotation=90,
             labelpad=8.0,
         )
-        difference_colorbar.outline.set_linewidth(1.0)
+        difference_colorbar.outline.set_linewidth(1.0)  # type: ignore[operator]
         difference_colorbar.ax.tick_params(width=0.8, length=3.0, pad=3.0)
 
     def update(self, time_index: int) -> None:
@@ -1497,14 +1501,7 @@ def main() -> None:
             output_directory / "movie2_preview.png",
         )
 
-        video_bytes = video_path.read_bytes()
-        moov_position = video_bytes.find(b"moov")
-        mdat_position = video_bytes.find(b"mdat")
-        faststart = (
-            moov_position >= 0
-            and mdat_position >= 0
-            and moov_position < mdat_position
-        )
+        faststart = mp4_has_faststart(video_path)
         stream = video_stream(probe)
         frame_count = int(
             stream.get("nb_read_frames")

@@ -421,12 +421,14 @@ def plot_eigenfunctions(
             pad=0.006,
         )
         for colorbar in (top_colorbar, bottom_colorbar):
+            if colorbar.norm.vmin is None or colorbar.norm.vmax is None:
+                raise ValueError("The eigenfunction color limits are undefined.")
             colorbar.set_ticks(
                 np.linspace(
                     colorbar.norm.vmin,
                     colorbar.norm.vmax,
                     3,
-                )
+                ).tolist()
             )
             colorbar.ax.tick_params(
                 length=11.0,
@@ -435,7 +437,7 @@ def plot_eigenfunctions(
                 direction="out",
                 labelsize=32,
             )
-            colorbar.outline.set_linewidth(4.8)
+            colorbar.outline.set_linewidth(4.8)  # type: ignore[operator]
         bottom_colorbar.ax.yaxis.set_major_formatter(
             mpl.ticker.FuncFormatter(
                 lambda value, _: ("0" if np.isclose(value, 0.0) else f"{value:.1f}")
@@ -513,12 +515,12 @@ def plot_eigenfunctions(
             panel_position = axes[row, -1].get_position()
             colorbar_position = colorbar.ax.get_position()
             colorbar.ax.set_position(
-                [
+                (
                     panel_position.x1 + 0.052,
                     panel_position.y0,
                     1.35 * colorbar_position.width,
                     panel_position.height,
-                ]
+                )
             )
 
         figure.canvas.draw()

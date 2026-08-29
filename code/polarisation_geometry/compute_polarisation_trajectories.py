@@ -39,14 +39,14 @@ def complex_pair(value: complex) -> list[float]:
 
 
 def spinor_from_angles(
-    stokes_magnitude: float,
+    magnitude: float,
     varphi: np.ndarray | float,
     longitude: np.ndarray | float,
     gamma: np.ndarray | float,
 ) -> np.ndarray:
     """Construct the manuscript spinor from latitude, longitude and phase."""
     varphi, longitude, gamma = np.broadcast_arrays(varphi, longitude, gamma)
-    amplitude = np.sqrt(stokes_magnitude)
+    amplitude = np.sqrt(magnitude)
     component_up = (
         amplitude
         * np.cos(np.pi / 4.0 - varphi / 2.0)
@@ -405,7 +405,7 @@ def run_mathematical_validation(
 
 
 def build_dataset(sample_count: int, fast_phase_count: int) -> dict[str, np.ndarray]:
-    """Construct all spinor, Stokes and hodograph arrays for both chapters."""
+    """Construct the spinor, Stokes and hodograph arrays for all three chapters."""
     if sample_count < 101:
         raise ValueError("sample_count must be at least 101.")
     if fast_phase_count < 181:
@@ -741,7 +741,7 @@ def main() -> None:
     args.output_directory.mkdir(parents=True, exist_ok=True)
     data_path = args.output_directory / DATA_FILENAME
     metadata_path = args.output_directory / METADATA_FILENAME
-    np.savez_compressed(data_path, **arrays)
+    np.savez_compressed(data_path, **arrays)  # type: ignore[arg-type]
     metadata_path.write_text(
         json.dumps(metadata, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",

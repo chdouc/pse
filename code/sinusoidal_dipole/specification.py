@@ -5,10 +5,22 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import sys
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CODE_ROOT = ROOT / "code"
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.paper_parameters import (  # noqa: E402
+    BUOYANCY_FREQUENCY_RATIO,
+    CORIOLIS_FREQUENCY,
+    DOMAIN_DEPTH,
+    FLOW_SPEED,
+)
+
 REFERENCE_METRICS_PATH = ROOT / "config" / "reference_metrics.json"
 
 MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
@@ -19,11 +31,11 @@ SUPPORTED_DIFFUSION = "none"
 SUPPORTED_OUTPUT_PRECISIONS = ("complex64", "complex128")
 
 PAPER_PHYSICAL_PARAMETERS = {
-    "coriolis_frequency_s-1": 1.0e-4,
-    "buoyancy_frequency_ratio": 20.0,
-    "domain_depth_m": 2000.0,
+    "coriolis_frequency_s-1": CORIOLIS_FREQUENCY,
+    "buoyancy_frequency_ratio": BUOYANCY_FREQUENCY_RATIO,
+    "domain_depth_m": DOMAIN_DEPTH,
     "background_length_scale_m": 50000.0,
-    "background_velocity_m_s": 0.25,
+    "background_velocity_m_s": FLOW_SPEED,
     "initial_velocity_amplitude_m_s": 1.0,
 }
 PAPER_NUMERICAL_PARAMETERS = {

@@ -1,0 +1,26 @@
+name: Reproducibility checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check code style
+        run: python -m ruff check code tests reproduce.py run_workflow.py validate_outputs.py
+      - name: Check types
+        run: python -m mypy code tests reproduce.py run_workflow.py validate_outputs.py
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Run deterministic smoke reproduction
+        run: python reproduce.py --smoke-test --output-directory artifacts/ci-smoke

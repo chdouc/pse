@@ -43,9 +43,12 @@ def validate_smoke(
             )
             nre = np.asarray(group["nre"])
             fields = np.asarray(group["complex_velocity"])
-            require(np.all(np.isfinite(nre)), f"n={mode}: non-finite NRE values.")
-            require(np.all(np.isfinite(fields)), f"n={mode}: non-finite fields.")
-            require(np.all(nre >= 0.0), f"n={mode}: negative NRE values.")
+            require(bool(np.all(np.isfinite(nre))), f"n={mode}: non-finite NRE values.")
+            require(
+                bool(np.all(np.isfinite(fields))),
+                f"n={mode}: non-finite fields.",
+            )
+            require(bool(np.all(nre >= 0.0)), f"n={mode}: negative NRE values.")
     return {
         "status": "passed",
         "kind": "smoke-test",

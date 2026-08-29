@@ -8,12 +8,19 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any
 
 import numpy as np
 from PIL import Image
 
-from render_wave_velocity_movie import (
+
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.video import mp4_has_faststart  # noqa: E402
+from render_wave_velocity_movie import (  # noqa: E402
     JFM_PREPARING_URL,
     JFM_SUBMITTING_URL,
     MAX_FILE_BYTES,
@@ -21,9 +28,11 @@ from render_wave_velocity_movie import (
     probe_video,
     resolve_executable,
 )
-from specification import (
+from specification import (  # noqa: E402
     MODEL_NAMES as MODEL_NAME_TUPLE,
     NRE_MODEL_NAMES as NRE_MODEL_NAME_TUPLE,
+    PAPER_NUMERICAL_PARAMETERS,
+    PAPER_PHYSICAL_PARAMETERS,
     load_reference_metrics,
 )
 
@@ -32,12 +41,14 @@ REFERENCE_METRICS = load_reference_metrics()
 MODEL_NAMES = list(MODEL_NAME_TUPLE)
 NRE_MODEL_NAMES = list(NRE_MODEL_NAME_TUPLE)
 EXPECTED_VERTICAL_MODES = np.asarray(REFERENCE_METRICS["movie2"]["vertical_modes"])
-EXPECTED_DOMAIN_DEPTH_METRES = 2000.0
+EXPECTED_DOMAIN_DEPTH_METRES = PAPER_PHYSICAL_PARAMETERS["domain_depth_m"]
 EXPECTED_VERTICAL_WAVELENGTHS_METRES = np.asarray(
     REFERENCE_METRICS["movie2"]["vertical_wavelengths_m"]
 )
-EXPECTED_GRID_POINTS = 128
-EXPECTED_STEPS_PER_INERTIAL_PERIOD = 64
+EXPECTED_GRID_POINTS = PAPER_NUMERICAL_PARAMETERS["horizontal_grid"]
+EXPECTED_STEPS_PER_INERTIAL_PERIOD = PAPER_NUMERICAL_PARAMETERS[
+    "time_steps_per_inertial_period"
+]
 EXPECTED_T50_MAXIMA = np.asarray(
     [
         REFERENCE_METRICS["movie2_t50_squared_velocity_maxima"][str(mode)]
@@ -123,30 +134,7 @@ REQUIRED_OUTPUTS = (
 
 def ffprobe_json(ffprobe: Path, video_path: Path) -> dict[str, Any]:
     """Probe all streams while counting decoded video frames."""
-    if "ffprobe" not in ffprobe.name.lower():
-        return probe_video(ffprobe, video_path)
-    command = [
-        str(ffprobe),
-        "-v",
-        "error",
-        "-count_frames",
-        "-show_format",
-        "-show_streams",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    result = subprocess.run(
-        command,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    probe = json.loads(result.stdout)
-    if "format" in probe:
-        probe["format"]["filename"] = video_path.name
-    return probe
+    return probe_video(ffprobe, video_path)
 
 
 def unique_stream(probe: dict[str, Any], stream_type: str) -> dict[str, Any]:
@@ -572,7 +560,10 @@ def check_media(
         raise ValueError("Average and real frame rates differ; output may not be CFR.")
     if not 20.0 <= avg_rate <= 24.0:
         raise ValueError(f"Frame rate is outside 20--24 fps: {avg_rate}.")
-    frame_count = int(video.get("nb_read_frames") or video.get("nb_frames"))
+    frame_count_value = video.get("nb_read_frames") or video.get("nb_frames")
+    if frame_count_value is None:
+        raise ValueError("The video probe did not report a frame count.")
+    frame_count = int(frame_count_value)
     duration = float(format_info["duration"])
     if not np.isclose(
         duration,
@@ -590,15 +581,7 @@ def check_media(
             f"{size_bytes} bytes."
         )
 
-    video_bytes = video_path.read_bytes()
-    moov_position = video_bytes.find(b"moov")
-    mdat_position = video_bytes.find(b"mdat")
-    faststart = (
-        moov_position >= 0
-        and mdat_position >= 0
-        and moov_position < mdat_position
-    )
-    if not faststart:
+    if not mp4_has_faststart(video_path):
         raise ValueError("MP4 moov atom is not before mdat; fast start is absent.")
 
     decode_command = [

@@ -17,6 +17,8 @@ from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import Bbox, ScaledTranslation
 import numpy as np
 
+from specification import load_reference_metrics
+
 
 DEFAULT_INPUT = (
     Path(__file__).resolve().parent
@@ -24,6 +26,15 @@ DEFAULT_INPUT = (
     / "sinusoidal_dipole_wave_velocity_fields.npz"
 )
 DEFAULT_OUTPUT_DIRECTORY = Path(__file__).resolve().parent / "figures"
+REFERENCE_METRICS = load_reference_metrics()
+PUBLISHED_N4_T50_LIMITS = tuple(
+    REFERENCE_METRICS["movie2"]["absolute_color_limits"]["4"]
+)
+FIGURE_WIDTH_INCHES = 330.24 / 72.0
+PAGE_HEIGHT_INCHES = 267.44 / 72.0
+LAYOUT_SCALE = FIGURE_WIDTH_INCHES / 7.15
+BOTTOM_CROP_INCHES = 0.12 * (PAGE_HEIGHT_INCHES / 6.18)
+FIGURE_HEIGHT_INCHES = PAGE_HEIGHT_INCHES + BOTTOM_CROP_INCHES
 
 
 def publication_style(*, use_tex: bool) -> dict[str, object]:
@@ -33,16 +44,16 @@ def publication_style(*, use_tex: bool) -> dict[str, object]:
         "axes.facecolor": "white",
         "savefig.facecolor": "white",
         "font.family": "serif",
-        "font.size": 9.0,
-        "axes.labelsize": 9.0,
-        "axes.titlesize": 9.0,
-        "xtick.labelsize": 9.0,
-        "ytick.labelsize": 9.0,
+        "font.size": 9.0 * LAYOUT_SCALE,
+        "axes.labelsize": 9.0 * LAYOUT_SCALE,
+        "axes.titlesize": 9.0 * LAYOUT_SCALE,
+        "xtick.labelsize": 9.0 * LAYOUT_SCALE,
+        "ytick.labelsize": 9.0 * LAYOUT_SCALE,
         "axes.linewidth": 0.6,
         "xtick.direction": "out",
         "ytick.direction": "out",
-        "xtick.major.size": 3.0,
-        "ytick.major.size": 3.0,
+        "xtick.major.size": 3.0 * LAYOUT_SCALE,
+        "ytick.major.size": 3.0 * LAYOUT_SCALE,
         "xtick.major.width": 0.6,
         "ytick.major.width": 0.6,
         "pdf.fonttype": 42,
@@ -90,7 +101,7 @@ def row_color_limits(
     fields: np.ndarray,
     *,
     target_time: float,
-    row_index: int,
+    vertical_mode: int,
 ) -> tuple[float, float, bool]:
     """Return the robust linear limits used for one vertical-mode row."""
     finite = fields[np.isfinite(fields)]
@@ -120,9 +131,8 @@ def row_color_limits(
         centered_on_one = False
 
     # The n=4 row at 50 IP uses the fixed published range.
-    if np.isclose(target_time, 50.0) and row_index == 1:
-        minimum = 0.01
-        maximum = 10.0
+    if np.isclose(target_time, 50.0) and vertical_mode == 4:
+        minimum, maximum = PUBLISHED_N4_T50_LIMITS
         centered_on_one = False
     return minimum, maximum, centered_on_one
 
@@ -134,7 +144,7 @@ def position_square_axes(
     """Place all field panels on a compact grid of equal squares."""
     row_count, column_count = axes.shape
     left, right, bottom, top = 0.13, 0.84, 0.10, 0.95
-    gap_inches = 0.13
+    gap_inches = 0.13 * min(LAYOUT_SCALE, PAGE_HEIGHT_INCHES / 6.18)
     figure_width, figure_height = figure.get_size_inches()
     side_inches = min(
         (figure_width * (right - left) - (column_count - 1) * gap_inches)
@@ -155,7 +165,7 @@ def position_square_axes(
             position_x = start_x + column * (side_width + gap_x)
             position_y = start_y + (row_count - 1 - row) * (side_height + gap_y)
             axes[row, column].set_position(
-                [position_x, position_y, side_width, side_height]
+                (position_x, position_y, side_width, side_height)
             )
 
 
@@ -174,7 +184,7 @@ def plot_snapshot(
         figure, axes = plt.subplots(
             vertical_modes.size,
             model_names.size,
-            figsize=(7.15, 1.15 * vertical_modes.size + 0.55),
+            figsize=(FIGURE_WIDTH_INCHES, FIGURE_HEIGHT_INCHES),
             squeeze=False,
             constrained_layout=False,
         )
@@ -186,6 +196,7 @@ def plot_snapshot(
                 float,
                 float,
                 bool,
+                int,
             ]
         ] = []
 
@@ -193,7 +204,7 @@ def plot_snapshot(
             minimum, maximum, centered_on_one = row_color_limits(
                 fields[row_index],
                 target_time=target_time,
-                row_index=row_index,
+                vertical_mode=int(vertical_mode),
             )
             image: mpl.image.AxesImage | None = None
             for column_index, model_name in enumerate(model_names):
@@ -230,8 +241,8 @@ def plot_snapshot(
                     )
                     axis.set_title(
                         display_name,
-                        pad=3.5,
-                        fontsize=12.0,
+                        pad=3.5 * LAYOUT_SCALE,
+                        fontsize=12.0 * LAYOUT_SCALE,
                     )
                 if column_index == 0:
                     row_label = (
@@ -246,14 +257,14 @@ def plot_snapshot(
                         transform=axis.transAxes,
                         ha="right",
                         va="center",
-                        fontsize=14.0,
+                        fontsize=14.0 * LAYOUT_SCALE,
                     )
                 if row_index == vertical_modes.size - 1:
                     axis.set_xticklabels((r"$-\pi$", r"$x/L$", r"$\pi$"))
                     labels = axis.get_xticklabels()
                     labels[0].set_horizontalalignment("left")
                     labels[2].set_horizontalalignment("right")
-                    labels[1].set_fontsize(9.0)
+                    labels[1].set_fontsize(9.0 * LAYOUT_SCALE)
                 if column_index == model_names.size - 1:
                     axis.yaxis.set_ticks_position("right")
                     axis.yaxis.set_label_position("right")
@@ -262,7 +273,7 @@ def plot_snapshot(
                     middle_label.set_rotation(90)
                     middle_label.set_horizontalalignment("center")
                     middle_label.set_verticalalignment("center")
-                    middle_label.set_fontsize(9.0)
+                    middle_label.set_fontsize(9.0 * LAYOUT_SCALE)
                     middle_label.set_transform(
                         middle_label.get_transform()
                         + ScaledTranslation(
@@ -274,22 +285,25 @@ def plot_snapshot(
 
             if image is None:
                 raise RuntimeError("No field panels were plotted.")
-            row_images.append((image, minimum, maximum, centered_on_one))
+            row_images.append(
+                (image, minimum, maximum, centered_on_one, int(vertical_mode))
+            )
 
         for row_index, (
             image,
             minimum,
             maximum,
             centered_on_one,
+            vertical_mode,
         ) in enumerate(row_images):
             panel_position = axes[row_index, -1].get_position()
             colorbar_axis = figure.add_axes(
-                [
+                (
                     0.875,
                     panel_position.y0,
                     0.010,
                     panel_position.height,
-                ]
+                )
             )
             colorbar = figure.colorbar(
                 image,
@@ -299,16 +313,12 @@ def plot_snapshot(
             if centered_on_one:
                 colorbar.set_ticks((minimum, 1.0, maximum))
             else:
-                colorbar.set_ticks(np.linspace(minimum, maximum, 3))
-            if np.isclose(target_time, 50.0) and row_index == 1:
+                colorbar.set_ticks(np.linspace(minimum, maximum, 3).tolist())
+            if np.isclose(target_time, 50.0) and vertical_mode == 4:
+                middle = round(0.5 * (minimum + maximum), 1)
+                colorbar.set_ticks((minimum, middle, maximum))
                 colorbar.ax.yaxis.set_major_formatter(
-                    FuncFormatter(
-                        lambda value, _: (
-                            "10.0"
-                            if np.isclose(value, 10.0)
-                            else colorbar_tick_label(value)
-                        )
-                    )
+                    FuncFormatter(lambda value, _: colorbar_tick_label(value))
                 )
             else:
                 colorbar.ax.yaxis.set_major_formatter(
@@ -332,7 +342,7 @@ def plot_snapshot(
                         figure.dpi_scale_trans,
                     )
                 )
-            colorbar.outline.set_linewidth(0.9)
+            colorbar.outline.set_linewidth(0.9)  # type: ignore[operator]
 
         top_position = axes[0, -1].get_position()
         figure.text(
@@ -341,16 +351,16 @@ def plot_snapshot(
             r"$|\phi|^2$",
             va="bottom",
             ha="center",
-            fontsize=10.0,
+            fontsize=10.0 * LAYOUT_SCALE,
         )
 
         output_stem.parent.mkdir(parents=True, exist_ok=True)
         figure_width, figure_height = figure.get_size_inches()
         export_box = Bbox.from_bounds(
             0.0,
-            0.12,
+            BOTTOM_CROP_INCHES,
             figure_width,
-            figure_height - 0.12,
+            figure_height - BOTTOM_CROP_INCHES,
         )
         figure.savefig(
             output_stem.with_suffix(".png"),

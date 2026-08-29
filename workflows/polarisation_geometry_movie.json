@@ -5,6 +5,7 @@
   "background_flow": "local polarisation geometry (no background-flow simulation)",
   "figures": [1, 2],
   "supplementary_movie": 1,
+  "default_output_directory": "artifacts/movie1",
   "spinor_convention": "|A> = (A_up, conj(A_down))^T",
   "steps": [
     {

@@ -14,7 +14,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
-from typing import Any
+import sys
+from typing import Any, BinaryIO, cast
 
 import imageio_ffmpeg
 import matplotlib as mpl
@@ -27,6 +28,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, FancyArrowPatch, Polygon
 import numpy as np
 from PIL import Image
+
+
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.video import mp4_atom_offsets  # noqa: E402
 
 
 DATA_FILENAME = "movie1_data.npz"
@@ -296,7 +304,10 @@ def draw_hodograph_axes(
 def canvas_rgb(figure: mpl.figure.Figure) -> np.ndarray:
     """Draw a figure and return a contiguous RGB frame."""
     figure.canvas.draw()
-    rgba = np.asarray(figure.canvas.buffer_rgba())
+    canvas = figure.canvas
+    if not isinstance(canvas, FigureCanvasAgg):
+        raise TypeError("Movie figures require the Agg canvas.")
+    rgba = np.asarray(canvas.buffer_rgba())
     return np.ascontiguousarray(rgba[..., :3])
 
 
@@ -444,10 +455,10 @@ class ChapterOneArtists:
     hodograph: Line2D
     hodograph_marker: Line2D
     phase_arrow: FancyArrowPatch
-    hodograph_coordinate_guides: tuple[Line2D, Line2D]
+    hodograph_coordinate_guides: tuple[Line2D, ...]
     major_axis: Line2D
     phase_reference: Line2D
-    hodograph_direction_triangles: tuple[Polygon, Polygon]
+    hodograph_direction_triangles: tuple[Polygon, ...]
     clockwise_circle: Line2D
     counterclockwise_circle: Line2D
     clockwise_component_arrow: FancyArrowPatch
@@ -643,7 +654,7 @@ def make_chapter_one(
         hodograph_coordinate_guides = tuple(hodograph_axis.lines[-2:])
         hodograph_position = hodograph_axis.get_position()
         hodograph_axis.set_position(
-            [
+            (
                 hodograph_position.x0
                 + 0.5
                 * (1.0 - CHAPTER_ONE_HODOGRAPH_PANEL_SCALE)
@@ -654,7 +665,7 @@ def make_chapter_one(
                 * hodograph_position.height,
                 CHAPTER_ONE_HODOGRAPH_PANEL_SCALE * hodograph_position.width,
                 CHAPTER_ONE_HODOGRAPH_PANEL_SCALE * hodograph_position.height,
-            ]
+            )
         )
         sphere_axis.set_title("Stokes-Poincare representation", pad=4)
         figure.text(
@@ -1086,12 +1097,12 @@ def make_generator_chapter(
                 sphere_position.x0 + sphere_position.x1
             )
             sphere_axis.set_position(
-                [
+                (
                     sphere_position.x0,
                     sphere_position.y0 - 0.055,
                     sphere_position.width,
                     sphere_position.height,
-                ]
+                )
             )
             draw_poincare_sphere(
                 sphere_axis,
@@ -1252,6 +1263,124 @@ def make_generator_chapter(
     )
 
 
+def set_hodograph_direction_triangles(
+    artists: ChapterOneArtists,
+    values: np.ndarray,
+    varphi: float,
+) -> None:
+    """Place the two handedness markers, hiding them at linear polarisation."""
+    unique_value_count = len(values)
+    if len(values) > 2 and abs(values[0] - values[-1]) < 1.0e-10:
+        unique_value_count -= 1
+    show_direction = abs(float(np.sin(varphi))) >= 0.04
+    direction_indices = (
+        unique_value_count // 8,
+        5 * unique_value_count // 8,
+    )
+    for triangle, direction_index in zip(
+        artists.hodograph_direction_triangles,
+        direction_indices,
+        strict=True,
+    ):
+        if show_direction:
+            triangle.set_xy(hodograph_direction_triangle(values, direction_index))
+            triangle.set_visible(True)
+        else:
+            triangle.set_visible(False)
+
+
+def set_rotary_overlay(
+    artists: ChapterOneArtists,
+    *,
+    visible: bool,
+    clockwise: complex,
+    counterclockwise: complex,
+    marker: np.ndarray,
+    elapsed_fast_phase: float,
+) -> None:
+    """Update the final rotary-vector construction in the hodograph panel."""
+    for overlay_artist in (
+        artists.clockwise_circle,
+        artists.counterclockwise_circle,
+        artists.clockwise_component_arrow,
+        artists.counterclockwise_component_arrow,
+        artists.rotary_sum_guides,
+        artists.phase_time_text,
+    ):
+        overlay_artist.set_visible(visible)
+    if not visible:
+        return
+
+    circle_theta = np.linspace(0.0, 2.0 * np.pi, 361)
+    clockwise_radius = abs(clockwise)
+    counterclockwise_radius = abs(counterclockwise)
+    artists.clockwise_circle.set_data(
+        clockwise_radius * np.cos(circle_theta),
+        clockwise_radius * np.sin(circle_theta),
+    )
+    artists.counterclockwise_circle.set_data(
+        counterclockwise_radius * np.cos(circle_theta),
+        counterclockwise_radius * np.sin(circle_theta),
+    )
+    clockwise_point = np.array([np.real(clockwise), np.imag(clockwise)])
+    counterclockwise_point = np.array(
+        [np.real(counterclockwise), np.imag(counterclockwise)]
+    )
+    artists.clockwise_component_arrow.set_positions(
+        (0.0, 0.0),
+        tuple(clockwise_point),
+    )
+    artists.counterclockwise_component_arrow.set_positions(
+        (0.0, 0.0),
+        tuple(counterclockwise_point),
+    )
+    artists.rotary_sum_guides.set_data(
+        [
+            clockwise_point[0],
+            marker[0],
+            np.nan,
+            counterclockwise_point[0],
+            marker[0],
+        ],
+        [
+            clockwise_point[1],
+            marker[1],
+            np.nan,
+            counterclockwise_point[1],
+            marker[1],
+        ],
+    )
+    artists.phase_time_text.set_text(
+        rf"$t={elapsed_fast_phase / np.pi:.2f}\,\pi/f$"
+    )
+
+
+def chapter_one_text(stage: str, landmark_label: str | None) -> tuple[str, str]:
+    """Return the subtitle and explanation for one Chapter 1 stage."""
+    if stage == "landmark":
+        return "Polarisation landmarks", landmark_label or ""
+    labels = {
+        "ellipticity": (
+            "Ellipticity",
+            r"Changing $\varphi$ changes handedness and ellipticity; "
+            r"the ellipticity angle is $\varphi/2$.",
+        ),
+        "orientation": (
+            "Orientation",
+            r"Changing $\lambda$ rotates the ellipse through $\lambda/2$.",
+        ),
+        "phase": (
+            "Fixed polarisation: rotary-vector decomposition",
+            r"The clockwise and counter-clockwise circular vectors add "
+            r"to the black hodograph vector.",
+        ),
+    }
+    try:
+        return labels[stage]
+    except KeyError as error:
+        raise ValueError(f"Unknown chapter-one stage: {stage}") from error
+
+
 def set_chapter_one_frame(
     artists: ChapterOneArtists,
     arrays: dict[str, np.ndarray],
@@ -1280,26 +1409,11 @@ def set_chapter_one_frame(
 
     values = hodographs[index]
     artists.hodograph.set_data(np.real(values), np.imag(values))
-    unique_value_count = len(values)
-    if len(values) > 2 and abs(values[0] - values[-1]) < 1.0e-10:
-        unique_value_count -= 1
-    show_direction = abs(float(np.sin(varphi[index]))) >= 0.04
-    direction_indices = (
-        unique_value_count // 8,
-        5 * unique_value_count // 8,
+    set_hodograph_direction_triangles(
+        artists,
+        values,
+        float(varphi[index]),
     )
-    for triangle, direction_index in zip(
-        artists.hodograph_direction_triangles,
-        direction_indices,
-        strict=True,
-    ):
-        if show_direction:
-            triangle.set_xy(
-                hodograph_direction_triangle(values, direction_index)
-            )
-            triangle.set_visible(True)
-        else:
-            triangle.set_visible(False)
 
     # Gamma is fixed relative to the current dashed major-axis guide.  During
     # the final section, two counter-rotating circular vectors reconstruct the
@@ -1372,60 +1486,14 @@ def set_chapter_one_frame(
         background_alpha if phase_overlay_visible else 0.18
     )
 
-    for overlay_artist in (
-        artists.clockwise_circle,
-        artists.counterclockwise_circle,
-        artists.clockwise_component_arrow,
-        artists.counterclockwise_component_arrow,
-        artists.rotary_sum_guides,
-        artists.phase_time_text,
-    ):
-        overlay_artist.set_visible(phase_overlay_visible)
-    if phase_overlay_visible:
-        circle_theta = np.linspace(0.0, 2.0 * np.pi, 361)
-        clockwise_radius = abs(clockwise)
-        counterclockwise_radius = abs(counterclockwise)
-        artists.clockwise_circle.set_data(
-            clockwise_radius * np.cos(circle_theta),
-            clockwise_radius * np.sin(circle_theta),
-        )
-        artists.counterclockwise_circle.set_data(
-            counterclockwise_radius * np.cos(circle_theta),
-            counterclockwise_radius * np.sin(circle_theta),
-        )
-        clockwise_point = np.array(
-            [np.real(clockwise), np.imag(clockwise)]
-        )
-        counterclockwise_point = np.array(
-            [np.real(counterclockwise), np.imag(counterclockwise)]
-        )
-        artists.clockwise_component_arrow.set_positions(
-            (0.0, 0.0),
-            tuple(clockwise_point),
-        )
-        artists.counterclockwise_component_arrow.set_positions(
-            (0.0, 0.0),
-            tuple(counterclockwise_point),
-        )
-        artists.rotary_sum_guides.set_data(
-            [
-                clockwise_point[0],
-                marker[0],
-                np.nan,
-                counterclockwise_point[0],
-                marker[0],
-            ],
-            [
-                clockwise_point[1],
-                marker[1],
-                np.nan,
-                counterclockwise_point[1],
-                marker[1],
-            ],
-        )
-        artists.phase_time_text.set_text(
-            rf"$t={elapsed_fast_phase / np.pi:.2f}\,\pi/f$"
-        )
+    set_rotary_overlay(
+        artists,
+        visible=phase_overlay_visible,
+        clockwise=clockwise,
+        counterclockwise=counterclockwise,
+        marker=marker,
+        elapsed_fast_phase=elapsed_fast_phase,
+    )
 
     # Left panel: longitude and latitude are drawn as projected spherical
     # sectors, while the phase is a local tangent-plane sector at S-hat.
@@ -1630,30 +1698,9 @@ def set_chapter_one_frame(
     artists.spinor_top.set_text(formatted_complex(spinors[index, 0]))
     artists.spinor_bottom.set_text(formatted_complex(spinors[index, 1]))
 
-    if stage == "landmark":
-        artists.subtitle.set_text("Polarisation landmarks")
-        artists.explanation.set_text(landmark_label or "")
-    elif stage == "ellipticity":
-        artists.subtitle.set_text("Ellipticity")
-        artists.explanation.set_text(
-            r"Changing $\varphi$ changes handedness and ellipticity; "
-            r"the ellipticity angle is $\varphi/2$."
-        )
-    elif stage == "orientation":
-        artists.subtitle.set_text("Orientation")
-        artists.explanation.set_text(
-            r"Changing $\lambda$ rotates the ellipse through $\lambda/2$."
-        )
-    elif stage == "phase":
-        artists.subtitle.set_text(
-            "Fixed polarisation: rotary-vector decomposition"
-        )
-        artists.explanation.set_text(
-            r"The clockwise and counter-clockwise circular vectors add "
-            r"to the black hodograph vector."
-        )
-    else:
-        raise ValueError(f"Unknown chapter-one stage: {stage}")
+    subtitle, explanation = chapter_one_text(stage, landmark_label)
+    artists.subtitle.set_text(subtitle)
+    artists.explanation.set_text(explanation)
     artists.parameter_text.set_text(
         rf"$\varphi={np.degrees(varphi[index]):.1f}^\circ,\quad"
         rf"\lambda={np.degrees(longitude[index]):.1f}^\circ,\quad"
@@ -1703,9 +1750,9 @@ def set_generator_chapter_frame(
         )
         if len(phi_points) >= 2:
             segments = np.stack([phi_points[:-1], phi_points[1:]], axis=1)
-            panel.phi_trail.set_segments(segments)
+            panel.phi_trail.set_segments(segments.tolist())
             panel.phi_trail.set_color(
-                gradient_segment_colours(artists.color, len(segments))
+                gradient_segment_colours(artists.color, len(segments)).tolist()
             )
         else:
             panel.phi_trail.set_segments([])
@@ -1859,15 +1906,6 @@ def start_encoder(
     return subprocess.Popen(command, stdin=subprocess.PIPE)
 
 
-def atom_offsets(path: Path) -> dict[str, int]:
-    """Locate top-level MP4 atoms sufficiently to verify fast-start ordering."""
-    data = path.read_bytes()
-    return {
-        "moov": data.find(b"moov"),
-        "mdat": data.find(b"mdat"),
-    }
-
-
 def probe_video(ffmpeg: str, path: Path) -> dict[str, Any]:
     """Probe and decode-check the movie without requiring ffprobe."""
     probe = subprocess.run(
@@ -1889,7 +1927,13 @@ def probe_video(ffmpeg: str, path: Path) -> dict[str, Any]:
         r"Duration:\s*(\d+):(\d+):([0-9.]+)",
         text,
     )
-    if not all((profile_match, pixel_match, size_match, fps_match, duration_match)):
+    if (
+        profile_match is None
+        or pixel_match is None
+        or size_match is None
+        or fps_match is None
+        or duration_match is None
+    ):
         raise ValueError(f"Could not parse ffmpeg probe output:\n{text}")
     hours, minutes, seconds = duration_match.groups()
     duration = 3600.0 * int(hours) + 60.0 * int(minutes) + float(seconds)
@@ -1915,7 +1959,7 @@ def probe_video(ffmpeg: str, path: Path) -> dict[str, Any]:
         raise ValueError(f"Video decode check failed:\n{decode.stderr}")
 
     frame_count, counted_duration = imageio_ffmpeg.count_frames_and_secs(str(path))
-    offsets = atom_offsets(path)
+    offsets = mp4_atom_offsets(path)
     return {
         "container": "MP4",
         "codec": "h264",
@@ -2261,9 +2305,185 @@ python run_workflow.py polarisation_geometry_movie --output-directory path/to/mo
     update_movies_readme(output_directory / "README.md", readme_section)
 
 
+class FrameWriter:
+    """Write raw RGB frames while reporting deterministic timeline progress."""
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self.stream = stream
+        self.written = 0
+
+    def send(self, frame: np.ndarray) -> None:
+        self.stream.write(frame.tobytes())
+        self.written += 1
+
+    def repeat(self, frame: np.ndarray, count: int, label: str) -> None:
+        print(f"rendering {label}: {count} frames", flush=True)
+        for _ in range(count):
+            self.send(frame)
+
+    @staticmethod
+    def announce(label: str, count: int) -> None:
+        print(f"rendering {label}: {count} frames", flush=True)
+
+
+def movie_frame_counts(fps: int) -> tuple[dict[str, int], int, int]:
+    """Return the unchanged frame counts for every Movie 1 segment."""
+    segments = (
+        ("opening", 2.0),
+        ("chapter1_title", 2.0),
+        ("landmark", 9.0),
+        ("ellipticity", 7.0),
+        ("orientation", 7.0),
+        (
+            "phase",
+            CHAPTER_ONE_PHASE_TURN_SECONDS + CHAPTER_ONE_PHASE_HOLD_SECONDS,
+        ),
+        ("chapter2_title", 2.0),
+        ("generator_positive", 14.0),
+        ("generator_positive_hold", GENERATOR_ENDPOINT_HOLD_SECONDS),
+        ("chapter3_title", 2.0),
+        ("generator_negative", 14.0),
+        ("generator_negative_hold", GENERATOR_ENDPOINT_HOLD_SECONDS),
+    )
+    frame_counts = {name: int(round(duration * fps)) for name, duration in segments}
+    phase_turn_frame_count = int(round(CHAPTER_ONE_PHASE_TURN_SECONDS * fps))
+    phase_hold_frame_count = int(round(CHAPTER_ONE_PHASE_HOLD_SECONDS * fps))
+    frame_counts["phase"] = (
+        phase_turn_frame_count + phase_hold_frame_count
+    )
+    return frame_counts, phase_turn_frame_count, phase_hold_frame_count
+
+
+def movie_title_frames(
+    width: int,
+    height: int,
+    *,
+    use_tex: bool,
+) -> dict[str, np.ndarray]:
+    """Create the four static title cards used by Movie 1."""
+    return {
+        "opening": title_frame(
+            width,
+            height,
+            "Supplementary movie 1",
+            "Polarisation geometry of a near-inertial wave",
+            use_tex=use_tex,
+        ),
+        "chapter1_title": title_frame(
+            width,
+            height,
+            "Chapter 1",
+            "Stokes-Poincare sphere and physical hodograph",
+            use_tex=use_tex,
+        ),
+        "chapter2_title": title_frame(
+            width,
+            height,
+            "Chapter 2",
+            "Positive actions of the four matrix basis directions",
+            use_tex=use_tex,
+        ),
+        "chapter3_title": title_frame(
+            width,
+            height,
+            "Chapter 3",
+            "Negative actions of the four matrix basis directions",
+            use_tex=use_tex,
+        ),
+    }
+
+
+def render_chapter_one_frames(
+    writer: FrameWriter,
+    chapter: ChapterOneArtists,
+    arrays: dict[str, np.ndarray],
+    frame_counts: dict[str, int],
+    *,
+    phase_turn_frame_count: int,
+    phase_hold_frame_count: int,
+) -> None:
+    """Render the landmark, ellipse, orientation and phase segments."""
+    sample_count = arrays["unit_progress"].size
+    fixed_gamma = float(arrays["initial_gamma"])
+    count = frame_counts["landmark"]
+    writer.announce("Chapter 1 landmarks", count)
+    for frame_index in range(count):
+        progress = frame_index / max(count - 1, 1)
+        fraction, label = landmark_schedule(progress)
+        data_index = int(round(fraction * (sample_count - 1)))
+        set_chapter_one_frame(
+            chapter,
+            arrays,
+            "landmark",
+            data_index,
+            displayed_gamma=fixed_gamma,
+            landmark_label=label,
+        )
+        writer.send(canvas_rgb(chapter.figure))
+
+    for stage in ("ellipticity", "orientation"):
+        count = frame_counts[stage]
+        writer.announce(f"Chapter 1 {stage}", count)
+        for frame_index in range(count):
+            progress = frame_index / max(count - 1, 1)
+            smooth = progress * progress * (3.0 - 2.0 * progress)
+            data_index = int(round(smooth * (sample_count - 1)))
+            set_chapter_one_frame(
+                chapter,
+                arrays,
+                stage,
+                data_index,
+                displayed_gamma=fixed_gamma,
+            )
+            writer.send(canvas_rgb(chapter.figure))
+
+    elapsed_fast_phase = final_fast_phase_schedule(
+        phase_turn_frame_count,
+        phase_hold_frame_count,
+    )
+    if elapsed_fast_phase.size != frame_counts["phase"]:
+        raise RuntimeError(
+            "The final fast-phase schedule has an invalid frame count."
+        )
+    writer.announce("Chapter 1 phase", elapsed_fast_phase.size)
+    for fast_phase in elapsed_fast_phase:
+        set_chapter_one_frame(
+            chapter,
+            arrays,
+            "phase",
+            0,
+            displayed_gamma=fixed_gamma,
+            elapsed_fast_phase=float(fast_phase),
+        )
+        writer.send(canvas_rgb(chapter.figure))
+
+
+def render_generator_frames(
+    writer: FrameWriter,
+    chapter: GeneratorChapterArtists,
+    arrays: dict[str, np.ndarray],
+    *,
+    frame_count: int,
+    hold_count: int,
+    label: str,
+) -> None:
+    """Render one matrix-generator chapter and its endpoint hold."""
+    sample_count = arrays["unit_progress"].size
+    final_frame: np.ndarray | None = None
+    writer.announce(label, frame_count)
+    for frame_index in range(frame_count):
+        progress = frame_index / max(frame_count - 1, 1)
+        data_index = int(round(progress * (sample_count - 1)))
+        set_generator_chapter_frame(chapter, arrays, data_index)
+        final_frame = canvas_rgb(chapter.figure)
+        writer.send(final_frame)
+    if final_frame is None:
+        raise RuntimeError(f"No {label} frames were rendered.")
+    writer.repeat(final_frame, hold_count, f"{label} endpoint hold")
+
+
 def render_movie(
     arrays: dict[str, np.ndarray],
-    metadata: dict[str, Any],
     output_directory: Path,
     *,
     ffmpeg: str,
@@ -2291,69 +2511,18 @@ def render_movie(
         chapter_number=3,
     )
     sample_count = arrays["unit_progress"].size
-
     preview_index = int(round(0.55 * (sample_count - 1)))
     set_generator_chapter_frame(chapter_two, arrays, preview_index)
     preview_frame = canvas_rgb(chapter_two.figure)
     Image.fromarray(preview_frame).save(output_directory / PREVIEW_FILENAME)
     if preview_only:
-        plt.close(chapter_one.figure)
-        plt.close(chapter_two.figure)
-        plt.close(chapter_three.figure)
+        for chapter in (chapter_one, chapter_two, chapter_three):
+            plt.close(chapter.figure)
         return None, 0
 
-    segments = (
-        ("opening", 2.0),
-        ("chapter1_title", 2.0),
-        ("landmark", 9.0),
-        ("ellipticity", 7.0),
-        ("orientation", 7.0),
-        (
-            "phase",
-            CHAPTER_ONE_PHASE_TURN_SECONDS + CHAPTER_ONE_PHASE_HOLD_SECONDS,
-        ),
-        ("chapter2_title", 2.0),
-        ("generator_positive", 14.0),
-        ("generator_positive_hold", GENERATOR_ENDPOINT_HOLD_SECONDS),
-        ("chapter3_title", 2.0),
-        ("generator_negative", 14.0),
-        ("generator_negative_hold", GENERATOR_ENDPOINT_HOLD_SECONDS),
-    )
-    frame_counts = {name: int(round(duration * fps)) for name, duration in segments}
-    phase_turn_frame_count = int(round(CHAPTER_ONE_PHASE_TURN_SECONDS * fps))
-    phase_hold_frame_count = int(round(CHAPTER_ONE_PHASE_HOLD_SECONDS * fps))
-    frame_counts["phase"] = (
-        phase_turn_frame_count + phase_hold_frame_count
-    )
+    frame_counts, phase_turn_count, phase_hold_count = movie_frame_counts(fps)
     total_frames = sum(frame_counts.values())
-    opening = title_frame(
-        width,
-        height,
-        "Supplementary movie 1",
-        "Polarisation geometry of a near-inertial wave",
-        use_tex=use_tex,
-    )
-    chapter1_title = title_frame(
-        width,
-        height,
-        "Chapter 1",
-        "Stokes-Poincare sphere and physical hodograph",
-        use_tex=use_tex,
-    )
-    chapter2_title = title_frame(
-        width,
-        height,
-        "Chapter 2",
-        "Positive actions of the four matrix basis directions",
-        use_tex=use_tex,
-    )
-    chapter3_title = title_frame(
-        width,
-        height,
-        "Chapter 3",
-        "Negative actions of the four matrix basis directions",
-        use_tex=use_tex,
-    )
+    title_frames = movie_title_frames(width, height, use_tex=use_tex)
     output_path = output_directory / MOVIE_FILENAME
     encoder = start_encoder(
         ffmpeg,
@@ -2365,101 +2534,47 @@ def render_movie(
     )
     if encoder.stdin is None:
         raise RuntimeError("Could not open the ffmpeg input pipe.")
-
-    written = 0
-
-    def send(frame: np.ndarray) -> None:
-        nonlocal written
-        encoder.stdin.write(frame.tobytes())
-        written += 1
-
-    for _ in range(frame_counts["opening"]):
-        send(opening)
-    for _ in range(frame_counts["chapter1_title"]):
-        send(chapter1_title)
-
-    fixed_gamma = float(arrays["initial_gamma"])
-    count = frame_counts["landmark"]
-    for frame_index in range(count):
-        progress = frame_index / max(count - 1, 1)
-        fraction, label = landmark_schedule(progress)
-        data_index = int(round(fraction * (sample_count - 1)))
-        set_chapter_one_frame(
-            chapter_one,
-            arrays,
-            "landmark",
-            data_index,
-            displayed_gamma=fixed_gamma,
-            landmark_label=label,
-        )
-        send(canvas_rgb(chapter_one.figure))
-
-    for stage in ("ellipticity", "orientation"):
-        count = frame_counts[stage]
-        for frame_index in range(count):
-            progress = frame_index / max(count - 1, 1)
-            smooth = progress * progress * (3.0 - 2.0 * progress)
-            data_index = int(round(smooth * (sample_count - 1)))
-            set_chapter_one_frame(
-                chapter_one,
-                arrays,
-                stage,
-                data_index,
-                displayed_gamma=fixed_gamma,
-            )
-            send(canvas_rgb(chapter_one.figure))
-
-    count = frame_counts["phase"]
-    elapsed_fast_phase = final_fast_phase_schedule(
-        phase_turn_frame_count,
-        phase_hold_frame_count,
+    writer = FrameWriter(cast(BinaryIO, encoder.stdin))
+    writer.repeat(title_frames["opening"], frame_counts["opening"], "opening")
+    writer.repeat(
+        title_frames["chapter1_title"],
+        frame_counts["chapter1_title"],
+        "Chapter 1 title",
     )
-    if elapsed_fast_phase.size != count:
-        raise RuntimeError(
-            "The final fast-phase schedule has an invalid frame count."
-        )
-    for fast_phase in elapsed_fast_phase:
-        set_chapter_one_frame(
-            chapter_one,
-            arrays,
-            "phase",
-            0,
-            displayed_gamma=fixed_gamma,
-            elapsed_fast_phase=float(fast_phase),
-        )
-        send(canvas_rgb(chapter_one.figure))
-
-    for _ in range(frame_counts["chapter2_title"]):
-        send(chapter2_title)
-
-    count = frame_counts["generator_positive"]
-    final_positive_frame: np.ndarray | None = None
-    for frame_index in range(count):
-        progress = frame_index / max(count - 1, 1)
-        data_index = int(round(progress * (sample_count - 1)))
-        set_generator_chapter_frame(chapter_two, arrays, data_index)
-        final_positive_frame = canvas_rgb(chapter_two.figure)
-        send(final_positive_frame)
-    if final_positive_frame is None:
-        raise RuntimeError("No Chapter 2 frames were rendered.")
-    for _ in range(frame_counts["generator_positive_hold"]):
-        send(final_positive_frame)
-
-    for _ in range(frame_counts["chapter3_title"]):
-        send(chapter3_title)
-
-    count = frame_counts["generator_negative"]
-    final_generator_frame: np.ndarray | None = None
-    for frame_index in range(count):
-        progress = frame_index / max(count - 1, 1)
-        data_index = int(round(progress * (sample_count - 1)))
-        set_generator_chapter_frame(chapter_three, arrays, data_index)
-        final_generator_frame = canvas_rgb(chapter_three.figure)
-        send(final_generator_frame)
-    if final_generator_frame is None:
-        raise RuntimeError("No Chapter 3 frames were rendered.")
-    for _ in range(frame_counts["generator_negative_hold"]):
-        send(final_generator_frame)
+    render_chapter_one_frames(
+        writer,
+        chapter_one,
+        arrays,
+        frame_counts,
+        phase_turn_frame_count=phase_turn_count,
+        phase_hold_frame_count=phase_hold_count,
+    )
+    writer.repeat(
+        title_frames["chapter2_title"],
+        frame_counts["chapter2_title"],
+        "Chapter 2 title",
+    )
+    render_generator_frames(
+        writer,
+        chapter_two,
+        arrays,
+        frame_count=frame_counts["generator_positive"],
+        hold_count=frame_counts["generator_positive_hold"],
+        label="Chapter 2 generator",
+    )
+    writer.repeat(
+        title_frames["chapter3_title"],
+        frame_counts["chapter3_title"],
+        "Chapter 3 title",
+    )
+    render_generator_frames(
+        writer,
+        chapter_three,
+        arrays,
+        frame_count=frame_counts["generator_negative"],
+        hold_count=frame_counts["generator_negative_hold"],
+        label="Chapter 3 generator",
+    )
 
     encoder.stdin.close()
     return_code = encoder.wait()
@@ -2468,8 +2583,10 @@ def render_movie(
     plt.close(chapter_three.figure)
     if return_code != 0:
         raise RuntimeError(f"ffmpeg failed with exit code {return_code}.")
-    if written != total_frames:
-        raise RuntimeError(f"Wrote {written} frames; expected {total_frames}.")
+    if writer.written != total_frames:
+        raise RuntimeError(
+            f"Wrote {writer.written} frames; expected {total_frames}."
+        )
 
     video = probe_video(ffmpeg, output_path)
     validate_video_target(
@@ -2507,6 +2624,261 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def pre_final_hodograph_metrics(
+    arrays: dict[str, np.ndarray],
+) -> tuple[np.ndarray, float, float, float, list[float], float, int]:
+    """Validate the Chapter 1 geometry before the rotary-vector section."""
+    initial_gamma = float(arrays["initial_gamma"])
+    relative_gamma_values: list[float] = []
+    arc_ratio_errors: list[float] = []
+    tangent_errors: list[float] = []
+    handedness_mismatches = 0
+    marker_ellipse_errors: list[float] = []
+    initial_marker, _, _ = hodograph_phase_marker(
+        float(arrays["initial_varphi"]),
+        float(arrays["initial_lambda"]) / 2.0,
+        -initial_gamma,
+    )
+    initial_reference_length = float(np.linalg.norm(initial_marker))
+    if initial_reference_length <= 1.0e-12:
+        raise ValueError("The initial hodograph phase reference is degenerate.")
+    arc_radius_ratio = 0.54 / initial_reference_length
+
+    for stage in ("landmark", "ellipticity", "orientation"):
+        for sample_index, (current_varphi, current_lambda) in enumerate(
+            zip(
+                arrays[f"{stage}_varphi"],
+                arrays[f"{stage}_lambda"],
+                strict=True,
+            )
+        ):
+            orientation = float(current_lambda) / 2.0
+            relative_gamma = -initial_gamma
+            marker, semi_major, semi_minor = hodograph_phase_marker(
+                float(current_varphi),
+                orientation,
+                relative_gamma,
+            )
+            relative_gamma_values.append(relative_gamma)
+            reference_length = float(np.linalg.norm(marker))
+            gamma_arc_radius = arc_radius_ratio * reference_length
+            if reference_length > 1.0e-12:
+                arc_ratio_errors.append(
+                    abs(gamma_arc_radius / reference_length - arc_radius_ratio)
+                )
+            marker_ellipse_errors.append(
+                hodograph_marker_ellipse_error(
+                    marker,
+                    semi_major,
+                    semi_minor,
+                    orientation,
+                )
+            )
+            if abs(float(np.sin(current_varphi))) < 0.04:
+                continue
+            current_values = arrays[f"{stage}_hodograph"][sample_index]
+            unique_count = len(current_values)
+            if abs(current_values[0] - current_values[-1]) < 1.0e-10:
+                unique_count -= 1
+            curve_points = np.column_stack(
+                [np.real(current_values), np.imag(current_values)]
+            )[:unique_count]
+            for direction_index in (unique_count // 8, 5 * unique_count // 8):
+                triangle = hodograph_direction_triangle(
+                    current_values,
+                    direction_index,
+                )
+                triangle_direction = triangle[0] - np.mean(triangle[1:], axis=0)
+                triangle_direction /= np.linalg.norm(triangle_direction)
+                sampled_tangent = (
+                    curve_points[(direction_index + 1) % unique_count]
+                    - curve_points[direction_index - 1]
+                )
+                sampled_tangent /= np.linalg.norm(sampled_tangent)
+                tangent_errors.append(
+                    abs(1.0 - np.dot(triangle_direction, sampled_tangent))
+                )
+                signed_direction = float(
+                    curve_points[direction_index, 0] * triangle_direction[1]
+                    - curve_points[direction_index, 1] * triangle_direction[0]
+                )
+                if signed_direction * float(current_varphi) >= 0.0:
+                    handedness_mismatches += 1
+
+    return (
+        initial_marker,
+        arc_radius_ratio,
+        float(np.ptp(np.asarray(relative_gamma_values))),
+        float(max(arc_ratio_errors, default=0.0)),
+        marker_ellipse_errors,
+        float(max(tangent_errors, default=0.0)),
+        handedness_mismatches,
+    )
+
+
+def chapter_one_fast_phase_metrics(
+    arrays: dict[str, np.ndarray],
+    fps: int,
+    initial_reference_marker: np.ndarray,
+    marker_ellipse_errors: list[float],
+) -> tuple[int, int, int, float, float, float, float, float, float, float, float]:
+    """Validate the Chapter 1 rotary-vector schedule and reconstruction."""
+    phase_turn_frame_count = int(round(CHAPTER_ONE_PHASE_TURN_SECONDS * fps))
+    phase_hold_frame_count = int(round(CHAPTER_ONE_PHASE_HOLD_SECONDS * fps))
+    schedule = final_fast_phase_schedule(
+        phase_turn_frame_count,
+        phase_hold_frame_count,
+    )
+    expected_step = 2.0 * np.pi / (phase_turn_frame_count - 1)
+    fast_phase_step_error = float(
+        np.max(np.abs(np.diff(schedule) - expected_step))
+    )
+    dwell_phase_turns = float(
+        (schedule[-1] - schedule[phase_turn_frame_count - 1]) / (2.0 * np.pi)
+    )
+    phase_spinor = arrays["phase_spinor"][0]
+    orientation = float(arrays["initial_lambda"]) / 2.0
+    _, semi_major, semi_minor = hodograph_phase_marker(
+        float(arrays["initial_varphi"]),
+        orientation,
+        0.0,
+    )
+    resultant_markers: list[np.ndarray] = []
+    clockwise_radii: list[float] = []
+    counterclockwise_radii: list[float] = []
+    rotary_sum_errors: list[float] = []
+    reference_phase = fast_phase_for_hodograph_point(
+        phase_spinor,
+        initial_reference_marker,
+    )
+    for elapsed_fast_phase in schedule:
+        clockwise, counterclockwise = rotary_component_vectors(
+            phase_spinor,
+            initial_reference_marker,
+            float(elapsed_fast_phase),
+        )
+        resultant = clockwise + counterclockwise
+        marker = np.array([np.real(resultant), np.imag(resultant)])
+        direct = (
+            complex(phase_spinor[0])
+            * np.exp(-1j * (reference_phase + float(elapsed_fast_phase)))
+            + complex(np.conj(phase_spinor[1]))
+            * np.exp(1j * (reference_phase + float(elapsed_fast_phase)))
+        )
+        rotary_sum_errors.append(abs(resultant - direct))
+        resultant_markers.append(marker)
+        clockwise_radii.append(abs(clockwise))
+        counterclockwise_radii.append(abs(counterclockwise))
+        marker_ellipse_errors.append(
+            hodograph_marker_ellipse_error(
+                marker,
+                semi_major,
+                semi_minor,
+                orientation,
+            )
+        )
+
+    turn_markers = np.asarray(resultant_markers[:phase_turn_frame_count])
+    resultant_angles = np.unwrap(
+        np.arctan2(turn_markers[:, 1], turn_markers[:, 0])
+    )
+    total_angle_error = float(
+        abs(resultant_angles[-1] - resultant_angles[0] + 2.0 * np.pi)
+    )
+    all_markers = np.asarray(resultant_markers)
+    all_angles = np.unwrap(np.arctan2(all_markers[:, 1], all_markers[:, 0]))
+    clockwise_step_violation = float(max(np.max(np.diff(all_angles)), 0.0))
+    rotary_sum_error = float(max(rotary_sum_errors))
+    if (
+        fast_phase_step_error > 2.0e-12
+        or total_angle_error > 2.0e-10
+        or clockwise_step_violation > 2.0e-12
+        or rotary_sum_error > 2.0e-12
+    ):
+        raise ValueError(
+            "The Chapter 1 fast phase failed continuous-dwell validation."
+        )
+    return (
+        phase_turn_frame_count,
+        phase_hold_frame_count,
+        int(schedule.size),
+        expected_step,
+        fast_phase_step_error,
+        dwell_phase_turns,
+        total_angle_error,
+        clockwise_step_violation,
+        float(np.ptp(clockwise_radii)),
+        float(np.ptp(counterclockwise_radii)),
+        rotary_sum_error,
+    )
+
+
+def generator_track_metrics(
+    arrays: dict[str, np.ndarray],
+) -> tuple[np.ndarray, float, dict[str, float], float, float, float, float]:
+    """Validate the common fast phase used by the two generator branches."""
+    phase_offset, initial_point = hodograph_phase_on_ray(
+        arrays["initial_spinor"],
+        GENERATOR_INITIAL_RAY_ANGLE,
+    )
+    initial_ray_error = float(
+        abs(np.angle(initial_point * np.exp(-1j * GENERATOR_INITIAL_RAY_ANGLE)))
+    )
+    track_definition_errors: list[float] = []
+    initial_marker_errors: list[float] = []
+    fast_phase_turns: dict[str, float] = {}
+    fast_phase_step_errors: dict[str, float] = {}
+    parameter = arrays["generator_parameter"]
+    display_ratio = float(parameter[-1] / (parameter[-1] / 50.0))
+    for direction in ("positive", "negative"):
+        spinor_histories = arrays[f"generator_spinor_{direction}"]
+        expected_step = float(
+            (parameter[-1] - parameter[0]) / (parameter.size - 1)
+        )
+        fast_phase_step_errors[direction] = float(
+            np.max(np.abs(np.diff(parameter) - expected_step))
+        )
+        fast_phase_turns[direction] = float(
+            (parameter[-1] - parameter[0]) / (2.0 * np.pi)
+        )
+        for column in range(4):
+            track = generator_phi_track(
+                spinor_histories[column],
+                parameter,
+                phase_offset=phase_offset,
+            )
+            direct = (
+                spinor_histories[column, :, 0]
+                * np.exp(-1j * (phase_offset + parameter))
+                + np.conj(spinor_histories[column, :, 1])
+                * np.exp(1j * (phase_offset + parameter))
+            )
+            track_definition_errors.append(float(np.max(np.abs(track - direct))))
+            initial_marker_errors.append(float(abs(track[0] - initial_point)))
+
+    track_definition_error = float(max(track_definition_errors))
+    initial_marker_error = float(max(initial_marker_errors))
+    fast_phase_step_error = float(max(fast_phase_step_errors.values()))
+    if (
+        initial_ray_error > 2.0e-12
+        or track_definition_error > 2.0e-12
+        or initial_marker_error > 2.0e-12
+        or fast_phase_step_error > 2.0e-12
+        or abs(fast_phase_turns["positive"] - 4.0) > 2.0e-12
+        or abs(fast_phase_turns["negative"] - 4.0) > 2.0e-12
+    ):
+        raise ValueError("The fast-phase generator tracks failed validation.")
+    return (
+        parameter,
+        display_ratio,
+        fast_phase_turns,
+        fast_phase_step_error,
+        initial_ray_error,
+        initial_marker_error,
+        track_definition_error,
+    )
+
+
 def main() -> None:
     """Load calculated states, render the movie and write sidecar files."""
     args = parse_args()
@@ -2530,7 +2902,6 @@ def main() -> None:
     ffmpeg = locate_ffmpeg(args.ffmpeg)
     video, total_frames = render_movie(
         arrays,
-        metadata,
         args.output_directory,
         ffmpeg=ffmpeg,
         width=args.width,
@@ -2551,282 +2922,43 @@ def main() -> None:
         "expected_frame_count": total_frames,
         "ffmpeg_build": Path(ffmpeg).name,
     }
-    phase_turn_frame_count = int(
-        round(CHAPTER_ONE_PHASE_TURN_SECONDS * args.fps)
-    )
-    phase_hold_frame_count = int(
-        round(CHAPTER_ONE_PHASE_HOLD_SECONDS * args.fps)
-    )
-    fast_phase_schedule = final_fast_phase_schedule(
+    (
+        initial_reference_marker,
+        gamma_arc_radius_to_reference_length,
+        pre_final_relative_gamma_variation,
+        pre_final_gamma_arc_ratio_error,
+        marker_ellipse_errors,
+        direction_triangle_tangent_error,
+        direction_triangle_handedness_mismatches,
+    ) = pre_final_hodograph_metrics(arrays)
+    (
         phase_turn_frame_count,
         phase_hold_frame_count,
+        phase_frame_count,
+        expected_step,
+        fast_phase_step_error,
+        dwell_phase_turns,
+        resultant_total_angle_error,
+        resultant_clockwise_step_violation,
+        clockwise_radius_variation,
+        counterclockwise_radius_variation,
+        rotary_sum_error,
+    ) = chapter_one_fast_phase_metrics(
+        arrays,
+        args.fps,
+        initial_reference_marker,
+        marker_ellipse_errors,
     )
-    phase_frame_count = int(fast_phase_schedule.size)
-    expected_step = 2.0 * np.pi / (phase_turn_frame_count - 1)
-    fast_phase_step_error = float(
-        np.max(np.abs(np.diff(fast_phase_schedule) - expected_step))
-    )
-    dwell_phase_turns = float(
-        (
-            fast_phase_schedule[-1]
-            - fast_phase_schedule[phase_turn_frame_count - 1]
-        )
-        / (2.0 * np.pi)
-    )
-    initial_gamma = float(arrays["initial_gamma"])
-    pre_final_relative_gamma = []
-    pre_final_gamma_arc_ratio_errors = []
-    direction_triangle_tangent_errors = []
-    direction_triangle_handedness_mismatches = 0
-    marker_ellipse_errors = []
-    initial_reference_marker, _, _ = hodograph_phase_marker(
-        float(arrays["initial_varphi"]),
-        float(arrays["initial_lambda"]) / 2.0,
-        -initial_gamma,
-    )
-    initial_reference_length = float(np.linalg.norm(initial_reference_marker))
-    if initial_reference_length <= 1.0e-12:
-        raise ValueError("The initial hodograph phase reference is degenerate.")
-    gamma_arc_radius_to_reference_length = 0.54 / initial_reference_length
-    for stage in ("landmark", "ellipticity", "orientation"):
-        for sample_index, (current_varphi, current_lambda) in enumerate(
-            zip(
-                arrays[f"{stage}_varphi"],
-                arrays[f"{stage}_lambda"],
-                strict=True,
-            )
-        ):
-            orientation = float(current_lambda) / 2.0
-            relative_gamma = -initial_gamma
-            marker, semi_major, semi_minor = hodograph_phase_marker(
-                float(current_varphi),
-                orientation,
-                relative_gamma,
-            )
-            pre_final_relative_gamma.append(relative_gamma)
-            reference_length = float(np.linalg.norm(marker))
-            gamma_arc_radius = (
-                gamma_arc_radius_to_reference_length * reference_length
-            )
-            if reference_length > 1.0e-12:
-                pre_final_gamma_arc_ratio_errors.append(
-                    abs(
-                        gamma_arc_radius / reference_length
-                        - gamma_arc_radius_to_reference_length
-                    )
-                )
-            marker_ellipse_errors.append(
-                hodograph_marker_ellipse_error(
-                    marker,
-                    semi_major,
-                    semi_minor,
-                    orientation,
-                )
-            )
-            if abs(float(np.sin(current_varphi))) >= 0.04:
-                current_values = arrays[f"{stage}_hodograph"][sample_index]
-                unique_count = len(current_values)
-                if abs(current_values[0] - current_values[-1]) < 1.0e-10:
-                    unique_count -= 1
-                curve_points = np.column_stack(
-                    [np.real(current_values), np.imag(current_values)]
-                )[:unique_count]
-                for direction_index in (
-                    unique_count // 8,
-                    5 * unique_count // 8,
-                ):
-                    triangle = hodograph_direction_triangle(
-                        current_values,
-                        direction_index,
-                    )
-                    triangle_direction = triangle[0] - np.mean(
-                        triangle[1:],
-                        axis=0,
-                    )
-                    triangle_direction /= np.linalg.norm(triangle_direction)
-                    sampled_tangent = (
-                        curve_points[(direction_index + 1) % unique_count]
-                        - curve_points[direction_index - 1]
-                    )
-                    sampled_tangent /= np.linalg.norm(sampled_tangent)
-                    direction_triangle_tangent_errors.append(
-                        abs(1.0 - np.dot(triangle_direction, sampled_tangent))
-                    )
-                    signed_direction = float(
-                        curve_points[direction_index, 0]
-                        * triangle_direction[1]
-                        - curve_points[direction_index, 1]
-                        * triangle_direction[0]
-                    )
-                    if signed_direction * float(current_varphi) >= 0.0:
-                        direction_triangle_handedness_mismatches += 1
-    phase_spinor = arrays["phase_spinor"][0]
-    orientation = float(arrays["initial_lambda"]) / 2.0
-    _, semi_major, semi_minor = hodograph_phase_marker(
-        float(arrays["initial_varphi"]),
-        orientation,
-        0.0,
-    )
-    resultant_markers = []
-    clockwise_radii = []
-    counterclockwise_radii = []
-    rotary_sum_errors = []
-    for elapsed_fast_phase in fast_phase_schedule:
-        clockwise, counterclockwise = rotary_component_vectors(
-            phase_spinor,
-            initial_reference_marker,
-            float(elapsed_fast_phase),
-        )
-        resultant = clockwise + counterclockwise
-        marker = np.array([np.real(resultant), np.imag(resultant)])
-        direct = (
-            complex(phase_spinor[0])
-            * np.exp(
-                -1j
-                * (
-                    fast_phase_for_hodograph_point(
-                        phase_spinor,
-                        initial_reference_marker,
-                    )
-                    + float(elapsed_fast_phase)
-                )
-            )
-            + complex(np.conj(phase_spinor[1]))
-            * np.exp(
-                1j
-                * (
-                    fast_phase_for_hodograph_point(
-                        phase_spinor,
-                        initial_reference_marker,
-                    )
-                    + float(elapsed_fast_phase)
-                )
-            )
-        )
-        rotary_sum_errors.append(abs(resultant - direct))
-        resultant_markers.append(marker)
-        clockwise_radii.append(abs(clockwise))
-        counterclockwise_radii.append(abs(counterclockwise))
-        marker_ellipse_errors.append(
-            hodograph_marker_ellipse_error(
-                marker,
-                semi_major,
-                semi_minor,
-                orientation,
-            )
-        )
-    turn_markers = np.asarray(resultant_markers[:phase_turn_frame_count])
-    resultant_angles = np.unwrap(
-        np.arctan2(turn_markers[:, 1], turn_markers[:, 0])
-    )
-    resultant_total_angle_error = float(
-        abs(resultant_angles[-1] - resultant_angles[0] + 2.0 * np.pi)
-    )
-    all_resultant_markers = np.asarray(resultant_markers)
-    all_resultant_angles = np.unwrap(
-        np.arctan2(
-            all_resultant_markers[:, 1],
-            all_resultant_markers[:, 0],
-        )
-    )
-    resultant_clockwise_step_violation = float(
-        max(np.max(np.diff(all_resultant_angles)), 0.0)
-    )
-    clockwise_radius_variation = float(np.ptp(clockwise_radii))
-    counterclockwise_radius_variation = float(
-        np.ptp(counterclockwise_radii)
-    )
-    rotary_sum_error = float(max(rotary_sum_errors))
-    if (
-        fast_phase_step_error > 2.0e-12
-        or resultant_total_angle_error > 2.0e-10
-        or resultant_clockwise_step_violation > 2.0e-12
-        or rotary_sum_error > 2.0e-12
-    ):
-        raise ValueError(
-            "The Chapter 1 fast phase failed continuous-dwell validation."
-        )
-    generator_phase_offset, generator_initial_point = hodograph_phase_on_ray(
-        arrays["initial_spinor"],
-        GENERATOR_INITIAL_RAY_ANGLE,
-    )
-    generator_initial_ray_error = float(
-        abs(
-            np.angle(
-                generator_initial_point
-                * np.exp(-1j * GENERATOR_INITIAL_RAY_ANGLE)
-            )
-        )
-    )
-    generator_track_definition_errors = []
-    generator_initial_marker_errors = []
-    generator_fast_phase_turns: dict[str, float] = {}
-    generator_fast_phase_step_errors: dict[str, float] = {}
-    generator_parameter = arrays["generator_parameter"]
-    generator_display_fast_to_slow_ratio = float(
-        generator_parameter[-1] / (generator_parameter[-1] / 50.0)
-    )
-    for direction in ("positive", "negative"):
-        spinor_histories = arrays[f"generator_spinor_{direction}"]
-        fast_phase = generator_parameter
-        expected_generator_step = float(
-            (fast_phase[-1] - fast_phase[0])
-            / (fast_phase.size - 1)
-        )
-        generator_fast_phase_step_errors[direction] = float(
-            np.max(
-                np.abs(np.diff(fast_phase) - expected_generator_step)
-            )
-        )
-        generator_fast_phase_turns[direction] = float(
-            (fast_phase[-1] - fast_phase[0]) / (2.0 * np.pi)
-        )
-        for column in range(4):
-            track = generator_phi_track(
-                spinor_histories[column],
-                fast_phase,
-                phase_offset=generator_phase_offset,
-            )
-            direct = (
-                spinor_histories[column, :, 0]
-                * np.exp(-1j * (generator_phase_offset + fast_phase))
-                + np.conj(spinor_histories[column, :, 1])
-                * np.exp(1j * (generator_phase_offset + fast_phase))
-            )
-            generator_track_definition_errors.append(
-                float(np.max(np.abs(track - direct)))
-            )
-            generator_initial_marker_errors.append(
-                float(abs(track[0] - generator_initial_point))
-            )
-    generator_track_definition_error = float(
-        max(generator_track_definition_errors)
-    )
-    generator_initial_marker_error = float(
-        max(generator_initial_marker_errors)
-    )
-    generator_fast_phase_step_error = float(
-        max(generator_fast_phase_step_errors.values())
-    )
-    if (
-        generator_initial_ray_error > 2.0e-12
-        or generator_track_definition_error > 2.0e-12
-        or generator_initial_marker_error > 2.0e-12
-        or generator_fast_phase_step_error > 2.0e-12
-        or abs(generator_fast_phase_turns["positive"] - 4.0) > 2.0e-12
-        or abs(generator_fast_phase_turns["negative"] - 4.0) > 2.0e-12
-    ):
-        raise ValueError("The fast-phase generator tracks failed validation.")
-    pre_final_relative_gamma_variation = float(
-        np.ptp(np.asarray(pre_final_relative_gamma))
-    )
-    pre_final_gamma_arc_ratio_error = float(
-        max(pre_final_gamma_arc_ratio_errors, default=0.0)
-    )
+    (
+        generator_parameter,
+        generator_display_fast_to_slow_ratio,
+        generator_fast_phase_turns,
+        generator_fast_phase_step_error,
+        generator_initial_ray_error,
+        generator_initial_marker_error,
+        generator_track_definition_error,
+    ) = generator_track_metrics(arrays)
     marker_ellipse_error = float(max(marker_ellipse_errors))
-    direction_triangle_tangent_error = float(
-        max(direction_triangle_tangent_errors, default=0.0)
-    )
     display_metadata = metadata.setdefault("display", {})
     for obsolete_key in (
         "chapter_1_phase_period_seconds",

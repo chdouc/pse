@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 import matplotlib as mpl
 
@@ -16,7 +17,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-FONT_SIZE = 10
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.spectrum_plotting import (  # noqa: E402
+    add_ratio_colorbar,
+    load_spectrum_colormap as load_colormap,
+    save_spectrum_figure,
+    spectrum_publication_style as publication_style,
+)
+
 DEFAULT_INPUT = (
     Path(__file__).resolve().parent / "data" / "gaussian_vortex_eigenanalysis.npz"
 )
@@ -26,65 +37,6 @@ DEFAULT_OUTPUT = (
 DEFAULT_COLORMAP = (
     Path(__file__).resolve().parent.parent / "common" / "custom_gradient_32_to_256.mat"
 )
-
-
-def publication_style(*, use_tex: bool) -> dict[str, object]:
-    """Return the plotting style used for the eigenanalysis spectra."""
-    scale = 0.8
-    style: dict[str, object] = {
-        "font.family": "serif",
-        "font.size": FONT_SIZE * scale,
-        "axes.labelsize": FONT_SIZE * scale,
-        "axes.titlesize": FONT_SIZE * scale,
-        "axes.linewidth": 1.2 * scale,
-        "axes.unicode_minus": False,
-        "xtick.labelsize": FONT_SIZE * scale,
-        "ytick.labelsize": FONT_SIZE * scale,
-        "xtick.direction": "out",
-        "ytick.direction": "out",
-        "xtick.major.size": 2.8 * scale,
-        "ytick.major.size": 2.8 * scale,
-        "xtick.major.width": 1.2 * scale,
-        "ytick.major.width": 1.2 * scale,
-        "legend.fontsize": FONT_SIZE * scale,
-        "savefig.dpi": 600,
-        "pdf.fonttype": 42,
-        "ps.fonttype": 42,
-    }
-    if use_tex:
-        style.update(
-            {
-                "text.usetex": True,
-                "text.latex.preamble": (
-                    r"\usepackage{amsmath}"
-                    r"\usepackage{newtxtext}"
-                    r"\usepackage{newtxmath}"
-                ),
-            }
-        )
-    else:
-        style.update({"text.usetex": False, "mathtext.fontset": "stix"})
-    return style
-
-
-def load_colormap(path: Path) -> mpl.colors.ListedColormap:
-    """Load the colour gradient used in the published spectrum."""
-    import h5py
-
-    with h5py.File(path, "r") as file:
-        colors = np.asarray(file["C"], dtype=float)
-    if colors.shape[0] == 3:
-        colors = colors.T
-    colors = np.clip(0.88 * colors[::-1], 0.0, 1.0)
-
-    transition_size = 52
-    gray_weight = 0.65 * (1.0 - np.linspace(0.0, 1.0, transition_size)) ** 1.4
-    gray = colors[:transition_size].mean(axis=1, keepdims=True)
-    colors[:transition_size] = (
-        gray_weight[:, None] * gray
-        + (1.0 - gray_weight[:, None]) * colors[:transition_size]
-    )
-    return mpl.colors.ListedColormap(colors, name="custom_gradient")
 
 
 def five_lowest_modes(data: np.ndarray) -> np.ndarray:
@@ -114,7 +66,7 @@ def scatter_by_branch(
             branch_data[:, 0],
             branch_data[:, 2],
             c=branch_data[:, 4],
-            **style,
+            **style,  # type: ignore[arg-type]
         )
     if collection is None:
         raise ValueError("No spectrum points are available for plotting.")
@@ -152,9 +104,9 @@ def plot_spectrum(
     scale = 0.8
     with plt.rc_context(publication_style(use_tex=use_tex)):
         figure = plt.figure(figsize=(5.6 * scale, 4.3 * scale))
-        colorbar_axis = figure.add_axes([0.905, 0.15, 0.014, 0.72])
-        vertical_axis = figure.add_axes([0.16, 0.58, 0.72, 0.34])
-        azimuthal_axis = figure.add_axes([0.16, 0.10, 0.72, 0.34])
+        colorbar_axis = figure.add_axes((0.905, 0.15, 0.014, 0.72))
+        vertical_axis = figure.add_axes((0.16, 0.58, 0.72, 0.34))
+        azimuthal_axis = figure.add_axes((0.16, 0.10, 0.72, 0.34))
 
         colormap = load_colormap(colormap_path)
         normalization = mpl.colors.Normalize(
@@ -267,40 +219,16 @@ def plot_spectrum(
             clip_on=False,
         )
 
-        color_scale = mpl.cm.ScalarMappable(
-            norm=normalization,
-            cmap=colormap,
+        add_ratio_colorbar(
+            figure,
+            colorbar_axis,
+            normalization=normalization,
+            colormap=colormap,
+            ratio_min=ratio_min,
+            ratio_max=ratio_max,
+            scale=scale,
         )
-        color_scale.set_array([])
-        colorbar = figure.colorbar(
-            color_scale,
-            cax=colorbar_axis,
-            orientation="vertical",
-        )
-        colorbar_ticks = np.linspace(ratio_min, ratio_max, 5)
-        colorbar.set_ticks(colorbar_ticks)
-        colorbar.set_ticklabels([rf"${tick:.2g}$" for tick in colorbar_ticks])
-        colorbar.ax.tick_params(direction="out", pad=2 * scale)
-        colorbar.ax.set_ylabel(
-            r"Averaged ratio "
-            r"$|\mathscr{A}_{\downarrow}|/|\mathscr{A}_{\uparrow}|$",
-            rotation=90,
-            labelpad=8 * scale,
-            va="center",
-        )
-
-        output_stem.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(
-            output_stem.with_suffix(".png"),
-            bbox_inches="tight",
-            pad_inches=0.02,
-        )
-        figure.savefig(
-            output_stem.with_suffix(".pdf"),
-            bbox_inches="tight",
-            pad_inches=0.02,
-        )
-        plt.close(figure)
+        save_spectrum_figure(figure, output_stem)
 
 
 def parse_args() -> argparse.Namespace:

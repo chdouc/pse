@@ -16,8 +16,9 @@ statistics, with detailed attention to the data previously used by Figures
 | Movie 2 | Processed arrays in an external sweep directory | Movie archive generated from `simulation.h5` |
 | File paths | Absolute paths allowed in indexes | Paths resolved from the repository or a user-selected output directory |
 | Parameters | Checks applied after private files were read | Validated manuscript configuration before integration |
-| Environment | Dependency lower bounds | Exact package versions in `requirements.txt` |
+| Environment | Dependency lower bounds | Exact direct and transitive package versions in `requirements.txt` |
 | Run record | Separate, incomplete logs | One manifest with source provenance, resource use and checksums |
+| Main entry | Figures 8--10 and Movie 2 only | Figures 1--10 and Movie 2 under one output tree |
 
 No observational dataset is used by these cases. The unavailable inputs were
 private numerical outputs. The revision replaces them with the equations,
@@ -25,7 +26,8 @@ analytic initial conditions and parameter files that generate those outputs.
 
 The retained 256-entry colour table in `code/common` is a rendering asset for
 the eigenanalysis figures. It is version controlled and is not numerical
-research data.
+research data. Its format and repository licensing are documented in
+`code/common/README.md`.
 
 ## Generation chain
 
@@ -39,11 +41,17 @@ formula in the manuscript appendix. HDF5 attributes record the formula, mode
 normalization, numerical choices, full configuration and the configuration
 signature used for cache-reuse checks.
 
+The symmetric-background solvers use the same `H=2000 m`, `f=10^-4 s^-1`,
+`N=20f` and unnormalised cosine-mode convention as the time-dependent solver.
+Their metadata records `Z_n(z)=cos(n*pi*z/H)`, `h=2H/n` and a unit physical
+reconstruction factor.
+
 Figures 1--2 and Movie 1 share one analytic polarisation-geometry calculation.
 Figure 3 is generated from analytic expressions for the parallel shear,
 Gaussian vortex and sinusoidal dipole. The Figure 4--7 eigenanalysis workflows
 start from analytic background flows and solve their matrix eigenproblems in
-the repository.
+the repository. `python reproduce.py --all` runs and validates all four static
+figure workflows before creating Figures 8--10 and Movie 2.
 
 ## Checks
 
@@ -52,12 +60,17 @@ The automated checks cover:
 - rigid-lid and flat-bottom Neumann conditions, zero vertical mean,
   `h=2H/n` and a unit reconstruction factor;
 - deterministic integration and exact PSE initial reconstruction;
+- Figure 5 branch frequencies and ordering, plus the selected Figure 7
+  eigenfrequencies;
 - configuration validation and rejection of an incompatible cached archive;
 - NRE ranges, field maxima and a pointwise PSE--HBE field difference;
 - consistency between saved complex fields and step-resolved NRE curves;
 - spatial and temporal refinement through `python reproduce.py
   --convergence-test`;
 - H.264 movie encoding, complete decoding and representative-frame checks.
+
+The continuous-integration workflow repeats style checks, full-repository type
+checks, unit tests and the deterministic smoke reproduction on Python 3.13.
 
 Measured regression values are stored in `config/reference_metrics.json`.
 Acceptance tolerances and simulation parameters are stored in

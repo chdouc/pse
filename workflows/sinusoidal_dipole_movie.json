@@ -4,6 +4,7 @@
   "description": "Supplementary movie 2: time-resolved sinusoidal-dipole wave-field comparison.",
   "background_flow": "sinusoidal dipole",
   "supplementary_item": "movie 2",
+  "default_output_directory": "artifacts/reproduction/full/movies",
   "models": ["YBJ", "TSB", "YBJ+", "PSE", "HBEs"],
   "controlled_comparison": {
     "background_velocity_m_s": 0.25,

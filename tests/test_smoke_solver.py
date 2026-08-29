@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -15,7 +16,7 @@ from check_convergence import check_refinement, periodic_resample
 from reproduce import source_inventory, validate_reusable_simulation
 
 
-def smoke_config() -> dict[str, object]:
+def smoke_config() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "random_seed": 20260826,

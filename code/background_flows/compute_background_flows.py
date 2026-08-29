@@ -90,7 +90,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     arrays = compute_fields(args.grid_points, args.rossby_number)
     temporary = output.with_name(output.stem + ".partial.npz")
-    np.savez_compressed(temporary, **arrays)
+    np.savez_compressed(temporary, **arrays)  # type: ignore[arg-type]
     os.replace(temporary, output)
     metadata = {
         "schema_version": 1,

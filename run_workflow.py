@@ -24,7 +24,29 @@ def workflow_names() -> list[str]:
     return sorted(path.stem for path in WORKFLOW_DIRECTORY.glob("*.json"))
 
 
-def load_workflow(name: str) -> dict[str, Any]:
+def remap_artifact_paths(value: Any, artifact_root: Path | None) -> Any:
+    """Redirect configured ``artifacts/...`` paths below one run directory."""
+    if artifact_root is None:
+        return value
+    if isinstance(value, dict):
+        return {
+            key: remap_artifact_paths(item, artifact_root)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [remap_artifact_paths(item, artifact_root) for item in value]
+    if isinstance(value, str):
+        path = Path(value)
+        if path.parts and path.parts[0] == "artifacts":
+            return str(artifact_root.joinpath(*path.parts[1:]))
+    return value
+
+
+def load_workflow(
+    name: str,
+    *,
+    artifact_root: Path | None = None,
+) -> dict[str, Any]:
     """Load and minimally validate one workflow configuration."""
     if name not in workflow_names():
         available = ", ".join(workflow_names())
@@ -38,7 +60,7 @@ def load_workflow(name: str) -> dict[str, Any]:
         raise ValueError(f"Workflow name does not match the filename: {path}.")
     if not workflow.get("steps"):
         raise ValueError(f"No steps are defined in {path}.")
-    return workflow
+    return remap_artifact_paths(workflow, artifact_root)
 
 
 def substitute(value: Any, replacements: dict[str, Any]) -> Any:
@@ -116,22 +138,40 @@ def build_command(
     return command
 
 
+def build_validation_command(
+    workflow: str,
+    *,
+    output_directory: Path | None,
+    artifact_root: Path | None,
+    data_only: bool,
+) -> list[str]:
+    """Build the validator command for one workflow invocation."""
+    command = [sys.executable, str(ROOT / "validate_outputs.py"), workflow]
+    if output_directory is not None:
+        command.extend(("--output-directory", str(output_directory)))
+    if artifact_root is not None:
+        command.extend(("--artifact-root", str(artifact_root)))
+    if data_only:
+        command.append("--data-only")
+    return command
+
+
 def run_workflow(args: argparse.Namespace) -> None:
     """Execute the selected workflow steps."""
-    workflow = load_workflow(args.workflow)
+    artifact_root = (
+        args.artifact_root.resolve() if args.artifact_root is not None else None
+    )
+    workflow = load_workflow(args.workflow, artifact_root=artifact_root)
     if args.stage == "validate":
-        if args.dry_run:
-            print(f"validate_outputs.py {args.workflow}")
-            return
-        validation_command = [
-            sys.executable,
-            str(ROOT / "validate_outputs.py"),
+        validation_command = build_validation_command(
             args.workflow,
-        ]
-        if args.output_directory is not None:
-            validation_command.extend(
-                ("--output-directory", str(args.output_directory))
-            )
+            output_directory=args.output_directory,
+            artifact_root=artifact_root,
+            data_only=False,
+        )
+        if args.dry_run:
+            print(subprocess.list2cmdline(validation_command))
+            return
         subprocess.run(validation_command, cwd=ROOT, check=True)
         return
     steps = selected_steps(workflow, args.stage)
@@ -166,17 +206,12 @@ def run_workflow(args: argparse.Namespace) -> None:
             subprocess.run(command, cwd=ROOT, check=True)
 
     if args.validate and not args.dry_run:
-        validation_command = [
-            sys.executable,
-            str(ROOT / "validate_outputs.py"),
+        validation_command = build_validation_command(
             args.workflow,
-        ]
-        if args.output_directory is not None:
-            validation_command.extend(
-                ("--output-directory", str(args.output_directory))
-            )
-        if args.stage == "compute":
-            validation_command.append("--data-only")
+            output_directory=args.output_directory,
+            artifact_root=artifact_root,
+            data_only=args.stage == "compute",
+        )
         subprocess.run(validation_command, cwd=ROOT, check=True)
 
 
@@ -202,6 +237,13 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Output directory required by workflows that create external "
             "submission artifacts."
+        ),
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=Path,
+        help=(
+            "Redirect every configured artifacts/... path below this directory."
         ),
     )
     parser.add_argument(

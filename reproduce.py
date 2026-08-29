@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -21,9 +20,12 @@ import psutil
 
 
 ROOT = Path(__file__).resolve().parent
+CODE_ROOT = ROOT / "code"
 SOURCE = ROOT / "code" / "sinusoidal_dipole"
+sys.path.insert(0, str(CODE_ROOT))
 sys.path.insert(0, str(SOURCE))
 
+from common.files import sha256_file  # noqa: E402
 from compute_error_statistics import compute_statistics  # noqa: E402
 from compute_movie_fields import compute_archive  # noqa: E402
 from compute_wave_velocity_fields import compute_fields  # noqa: E402
@@ -39,6 +41,12 @@ from validate_reproduction import validate_all, validate_smoke  # noqa: E402
 DEFAULT_CONFIG = ROOT / "config" / "reproduction.json"
 DEFAULT_CONVERGENCE_CONFIG = ROOT / "config" / "convergence.json"
 DEFAULT_OUTPUT = ROOT / "artifacts" / "reproduction"
+STATIC_WORKFLOWS = (
+    "polarisation_geometry",
+    "background_flows",
+    "parallel_shear",
+    "gaussian_vortex",
+)
 
 
 class PeakMemoryMonitor:
@@ -72,14 +80,6 @@ class PeakMemoryMonitor:
         return self.peak_bytes
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def save_npz(path: Path, data: dict[str, Any]) -> None:
     import numpy as np
 
@@ -100,10 +100,8 @@ def dependency_versions() -> dict[str, str]:
         "pandas",
         "matplotlib",
         "Pillow",
-        "imageio",
         "imageio-ffmpeg",
         "psutil",
-        "pytest",
     )
     return {name: importlib.metadata.version(name) for name in names}
 
@@ -147,9 +145,13 @@ def source_inventory() -> list[dict[str, Any]]:
         "run_workflow.py",
         "validate_outputs.py",
         "requirements.txt",
+        "requirements-dev.txt",
+        "pyproject.toml",
         "README.md",
         "AUDIT.md",
         "CITATION.cff",
+        "LICENSE",
+        ".github",
         ".gitignore",
     )
     git_files = git_output(
@@ -161,7 +163,9 @@ def source_inventory() -> list[dict[str, Any]]:
         *pathspecs,
     )
     if git_files is not None:
-        relative_paths = sorted(line for line in git_files.splitlines() if line)
+        relative_paths: list[str] = sorted(
+            line for line in git_files.splitlines() if line
+        )
     else:
         relative_paths = []
         excluded_parts = {"__pycache__", "data", "figures"}
@@ -171,17 +175,17 @@ def source_inventory() -> list[dict[str, Any]]:
             for path in candidates:
                 if not path.is_file() or path.suffix in {".pyc", ".pyo"}:
                     continue
-                relative = path.relative_to(ROOT)
-                if excluded_parts.intersection(relative.parts):
+                relative_path = path.relative_to(ROOT)
+                if excluded_parts.intersection(relative_path.parts):
                     continue
-                relative_paths.append(str(relative))
-    records = []
-    for relative in sorted(set(relative_paths)):
-        path = ROOT / relative
+                relative_paths.append(str(relative_path))
+    records: list[dict[str, Any]] = []
+    for relative_label in sorted(set(relative_paths)):
+        path = ROOT / relative_label
         if path.is_file():
             records.append(
                 {
-                    "path": relative.replace("\\", "/"),
+                    "path": relative_label.replace("\\", "/"),
                     "bytes": path.stat().st_size,
                     "sha256": sha256_file(path),
                 }
@@ -320,6 +324,26 @@ def saved_times(config: dict[str, Any]) -> dict[int, list[int]]:
     }
 
 
+def reproduce_static_workflows(output_directory: Path) -> dict[str, str]:
+    """Generate and validate Figures 1--7 below the unified output tree."""
+    artifact_root = output_directory / "workflows"
+    results: dict[str, str] = {}
+    for workflow in STATIC_WORKFLOWS:
+        run_command(
+            [
+                sys.executable,
+                str(ROOT / "run_workflow.py"),
+                workflow,
+                "--artifact-root",
+                str(artifact_root),
+                "--no-tex",
+                "--validate",
+            ]
+        )
+        results[workflow] = "passed"
+    return results
+
+
 def reproduce_all(
     config: dict[str, Any],
     output_directory: Path,
@@ -341,7 +365,10 @@ def reproduce_all(
                 "--reuse-simulation requires an existing data/simulation.h5."
             )
         validate_reusable_simulation(simulation_path, config)
-    else:
+
+    workflow_validations = reproduce_static_workflows(output_directory)
+
+    if not reuse_simulation:
         create_simulation_file(
             simulation_path,
             config,
@@ -364,6 +391,7 @@ def reproduce_all(
         movie_fields_path,
         config,
     )
+    validation["workflow_validations"] = workflow_validations
 
     run_command(
         [

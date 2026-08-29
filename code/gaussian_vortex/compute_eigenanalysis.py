@@ -10,16 +10,26 @@ import argparse
 from functools import lru_cache
 import json
 from pathlib import Path
+import sys
 
 import numpy as np
 from scipy import special
 
 
-CORIOLIS_FREQUENCY = 1.0e-4
-BUOYANCY_FREQUENCY = 20.0 * CORIOLIS_FREQUENCY
-FLOW_SPEED = 0.25
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.paper_parameters import (  # noqa: E402
+    BUOYANCY_FREQUENCY,
+    CORIOLIS_FREQUENCY,
+    DOMAIN_DEPTH,
+    FLOW_SPEED,
+    vertical_mode_dispersive_coefficient,
+    vertical_wavelength,
+)
+
 FLOW_LENGTH = 25.0e3
-DOMAIN_DEPTH = 4000.0
 DEFAULT_VERTICAL_MODE = 4
 
 DEFAULT_OUTPUT = (
@@ -136,10 +146,11 @@ def assemble_gaussian_vortex_matrix(
         radial_domain,
     )
 
-    dispersive_coefficient = (
-        buoyancy_frequency**2
-        * DOMAIN_DEPTH**2
-        / (8.0 * np.pi**2 * coriolis_frequency * vertical_mode**2)
+    dispersive_coefficient = vertical_mode_dispersive_coefficient(
+        vertical_mode,
+        depth_m=DOMAIN_DEPTH,
+        coriolis_frequency=coriolis_frequency,
+        buoyancy_frequency=buoyancy_frequency,
     )
     velocity, velocity_gradient = gaussian_vortex(
         radius,
@@ -552,7 +563,7 @@ def main() -> None:
         vertical_mode_spectrum=vertical_mode_spectrum,
         azimuthal_spectrum=azimuthal_spectrum,
         radial_domain=np.asarray(radial_domain),
-        **selected_modes,
+        **selected_modes,  # type: ignore[arg-type]
     )
     metadata = {
         "background_flow": ("U_theta(r) = -U_ref sqrt(e) (r/L) exp[-r^2/(2L^2)]"),
@@ -562,6 +573,10 @@ def main() -> None:
         "flow_speed_m_s-1": FLOW_SPEED,
         "flow_length_m": FLOW_LENGTH,
         "domain_depth_m": DOMAIN_DEPTH,
+        "vertical_mode_definition": "Z_n(z) = cos(n*pi*z/H)",
+        "vertical_wavelength_m": vertical_wavelength(args.mode_vertical_mode),
+        "normalisation": "unnormalised",
+        "physical_reconstruction_factor": 1.0,
         "basis_size_per_component": args.basis_size,
         "radial_domain_m": radial_domain,
         "fixed_azimuthal_wavenumber": args.fixed_azimuthal_wavenumber,

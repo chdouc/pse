@@ -164,11 +164,10 @@ def plot_eigenfunctions(
         )
 
         for panel_index, axis in enumerate(axes):
-            display_sign = -1.0 if panel_index == 1 else 1.0
             for wavenumber_index in range(wavenumbers.size):
                 axis.plot(
                     coordinate,
-                    display_sign * component_up[wavenumber_index, panel_index],
+                    component_up[wavenumber_index, panel_index],
                     color=blue_colors[wavenumber_index],
                     linewidth=1.1,
                     zorder=3,
@@ -177,7 +176,7 @@ def plot_eigenfunctions(
             for wavenumber_index in range(wavenumbers.size):
                 axis.plot(
                     coordinate,
-                    display_sign * component_down[wavenumber_index, panel_index],
+                    component_down[wavenumber_index, panel_index],
                     color=red_colors[wavenumber_index],
                     linewidth=1.0,
                     zorder=4,

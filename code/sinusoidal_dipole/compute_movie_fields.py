@@ -51,7 +51,7 @@ def compute_archive(
     simulation_path: Path,
     *,
     difference_quantile: float | None = None,
-) -> dict[str, np.ndarray]:
+) -> dict[str, Any]:
     """Build the movie archive without interpolation or external inputs."""
     fields_by_mode: list[np.ndarray] = []
     nre_by_mode: list[np.ndarray] = []
