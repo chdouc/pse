@@ -11,9 +11,16 @@ import h5py
 import numpy as np
 import pytest
 
-from solver import Grid, _initial_pse, create_simulation_file, ifft2, parameters_from_config
+from solver import (
+    Grid,
+    _initial_pse,
+    create_simulation_file,
+    ifft2,
+    parameters_from_config,
+)
 from check_convergence import check_refinement, periodic_resample
 from reproduce import source_inventory, validate_reusable_simulation
+from specification import simulation_source_inventory, simulation_source_signature
 
 
 def smoke_config() -> dict[str, Any]:
@@ -67,9 +74,7 @@ def test_pse_initialisation_matches_appendix_formula() -> None:
     assert iterations == 0
     assert residual < 1.0e-14
     assert np.allclose(ifft2(up_hat), expected_up, rtol=0.0, atol=1.0e-14)
-    assert np.allclose(
-        np.conj(ifft2(down_hat)), expected_down, rtol=0.0, atol=1.0e-14
-    )
+    assert np.allclose(np.conj(ifft2(down_hat)), expected_down, rtol=0.0, atol=1.0e-14)
 
 
 def test_periodic_resampling_preserves_resolved_fourier_modes() -> None:
@@ -151,6 +156,12 @@ def test_solver_is_deterministic_and_self_consistent(tmp_path: Path) -> None:
                 "PSE",
                 "HBEs",
             ]
+            assert handle.attrs["simulation_source_signature_sha256"] == (
+                simulation_source_signature()
+            )
+            assert json.loads(handle.attrs["simulation_source_inventory_json"]) == (
+                simulation_source_inventory()
+            )
     assert np.array_equal(outputs[0][0], outputs[1][0])
     assert np.array_equal(outputs[0][1], outputs[1][1])
 
@@ -174,6 +185,28 @@ def test_reuse_rejects_a_different_numerical_configuration(tmp_path: Path) -> No
     changed["numerical_parameters"]["horizontal_grid"] = 32
     with pytest.raises(ValueError, match="different configuration"):
         validate_reusable_simulation(path, changed)
+
+
+def test_reuse_rejects_a_different_solver_source(tmp_path: Path) -> None:
+    path = tmp_path / "simulation.h5"
+    config = smoke_config()
+    create_simulation_file(path, config, [4], {4: [0, 1]})
+    with h5py.File(path, "r+") as handle:
+        handle.attrs["simulation_source_signature_sha256"] = "0" * 64
+
+    with pytest.raises(ValueError, match="different solver source"):
+        validate_reusable_simulation(path, config)
+
+
+def test_reuse_rejects_an_archive_without_source_provenance(tmp_path: Path) -> None:
+    path = tmp_path / "simulation.h5"
+    config = smoke_config()
+    create_simulation_file(path, config, [4], {4: [0, 1]})
+    with h5py.File(path, "r+") as handle:
+        del handle.attrs["simulation_source_signature_sha256"]
+
+    with pytest.raises(ValueError, match="no solver-source signature"):
+        validate_reusable_simulation(path, config)
 
 
 def test_source_inventory_works_without_git(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,6 +19,8 @@ def vertical_mode_wavenumber(
     """Return ``n*pi/H`` for the manuscript's unnormalised cosine modes."""
     if mode < 1:
         raise ValueError("The vertical mode must be positive.")
+    if depth_m <= 0.0:
+        raise ValueError("The domain depth must be positive.")
     return mode * math.pi / depth_m
 
 
@@ -40,6 +42,10 @@ def vertical_mode_dispersive_coefficient(
 ) -> float:
     """Return ``N^2 H^2 / (2*pi^2*f*n^2)`` for one vertical mode."""
     vertical_mode_wavenumber(mode, depth_m)
+    if coriolis_frequency <= 0.0:
+        raise ValueError("The Coriolis frequency must be positive.")
+    if buoyancy_frequency <= 0.0:
+        raise ValueError("The buoyancy frequency must be positive.")
     return (
         buoyancy_frequency**2
         * depth_m**2

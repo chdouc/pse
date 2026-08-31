@@ -46,3 +46,11 @@ def test_unnormalised_physical_reconstruction_is_documented() -> None:
     metadata = mode_metadata(4, DEPTH_M)
     assert metadata["normalisation"] == "unnormalised"
     assert metadata["physical_reconstruction_factor"] == 1.0
+
+
+@pytest.mark.parametrize("depth_m", [0.0, -2000.0])
+def test_nonpositive_depth_is_rejected(depth_m: float) -> None:
+    with pytest.raises(ValueError, match="depth"):
+        vertical_wavelength(4, depth_m)
+    with pytest.raises(ValueError, match="depth"):
+        vertical_mode(np.array([0.0]), 4, depth_m)

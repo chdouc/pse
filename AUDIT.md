@@ -38,8 +38,9 @@ downstream scripts accept that archive as their sole numerical input.
 
 The PSE initialization implements the frozen-local, strain-only `O(Ro)`
 formula in the manuscript appendix. HDF5 attributes record the formula, mode
-normalization, numerical choices, full configuration and the configuration
-signature used for cache-reuse checks.
+normalization, numerical choices, full configuration, and separate signatures
+for the configuration and simulation-defining source files. Cache reuse is
+rejected if either signature is missing or differs.
 
 The symmetric-background solvers use the same `H=2000 m`, `f=10^-4 s^-1`,
 `N=20f` and unnormalised cosine-mode convention as the time-dependent solver.
@@ -61,16 +62,20 @@ The automated checks cover:
   `h=2H/n` and a unit reconstruction factor;
 - deterministic integration and exact PSE initial reconstruction;
 - Figure 5 branch frequencies and ordering, plus the selected Figure 7
-  eigenfrequencies;
-- configuration validation and rejection of an incompatible cached archive;
+  eigenfrequencies and a reduced-basis Gaussian-vortex CI eigensolve;
+- configuration validation and rejection of a cache from different parameters
+  or solver source;
 - NRE ranges, field maxima and a pointwise PSE--HBE field difference;
+- Figure 9--10 colour-limit sidecars containing the true extrema and clipped
+  sample fractions for every vertical-mode row;
 - consistency between saved complex fields and step-resolved NRE curves;
 - spatial and temporal refinement through `python reproduce.py
   --convergence-test`;
 - H.264 movie encoding, complete decoding and representative-frame checks.
 
 The continuous-integration workflow repeats style checks, full-repository type
-checks, unit tests and the deterministic smoke reproduction on Python 3.13.
+checks, unit tests and the deterministic smoke reproduction on Python 3.13. A
+manual workflow dispatch additionally runs the complete reproduction.
 
 Measured regression values are stored in `config/reference_metrics.json`.
 Acceptance tolerances and simulation parameters are stored in

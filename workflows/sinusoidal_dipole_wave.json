@@ -39,6 +39,10 @@
     "figure_stems": [
       "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_10IP",
       "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_50IP"
+    ],
+    "figure_metadata": [
+      "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_10IP.json",
+      "artifacts/reproduction/full/figures/sinusoidal_dipole_wave_velocity_50IP.json"
     ]
   }
 }

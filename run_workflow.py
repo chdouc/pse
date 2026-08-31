@@ -14,9 +14,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent
 WORKFLOW_DIRECTORY = ROOT / "workflows"
 PLACEHOLDER_PATTERN = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}$")
-OPTIONAL_PLACEHOLDER_PATTERN = re.compile(
-    r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$"
-)
+OPTIONAL_PLACEHOLDER_PATTERN = re.compile(r"^\$\{([a-zA-Z_][a-zA-Z0-9_]*)\?\}$")
 
 
 def workflow_names() -> list[str]:
@@ -156,16 +154,34 @@ def build_validation_command(
     return command
 
 
+def resolve_workflow_output_directory(
+    workflow: dict[str, Any],
+    requested: Path | None,
+) -> Path | None:
+    """Resolve an explicit or configured workflow output directory."""
+    if requested is not None:
+        return requested.resolve()
+    configured = workflow.get("default_output_directory")
+    if configured is None:
+        return None
+    directory = Path(configured)
+    return directory if directory.is_absolute() else (ROOT / directory).resolve()
+
+
 def run_workflow(args: argparse.Namespace) -> None:
     """Execute the selected workflow steps."""
     artifact_root = (
         args.artifact_root.resolve() if args.artifact_root is not None else None
     )
     workflow = load_workflow(args.workflow, artifact_root=artifact_root)
+    output_directory = resolve_workflow_output_directory(
+        workflow,
+        args.output_directory,
+    )
     if args.stage == "validate":
         validation_command = build_validation_command(
             args.workflow,
-            output_directory=args.output_directory,
+            output_directory=output_directory,
             artifact_root=artifact_root,
             data_only=False,
         )
@@ -180,9 +196,7 @@ def run_workflow(args: argparse.Namespace) -> None:
 
     replacements = {
         "output_directory": (
-            str(args.output_directory)
-            if args.output_directory is not None
-            else None
+            str(output_directory) if output_directory is not None else None
         ),
         "ffmpeg": str(args.ffmpeg) if args.ffmpeg is not None else None,
         "ffprobe": str(args.ffprobe) if args.ffprobe is not None else None,
@@ -208,7 +222,7 @@ def run_workflow(args: argparse.Namespace) -> None:
     if args.validate and not args.dry_run:
         validation_command = build_validation_command(
             args.workflow,
-            output_directory=args.output_directory,
+            output_directory=output_directory,
             artifact_root=artifact_root,
             data_only=args.stage == "compute",
         )
@@ -242,9 +256,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--artifact-root",
         type=Path,
-        help=(
-            "Redirect every configured artifacts/... path below this directory."
-        ),
+        help=("Redirect every configured artifacts/... path below this directory."),
     )
     parser.add_argument(
         "--ffmpeg",

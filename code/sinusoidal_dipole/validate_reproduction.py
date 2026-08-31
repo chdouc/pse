@@ -103,8 +103,7 @@ def validate_all(
                 f"n={mode}: PSE initial field reconstruction failed.",
             )
             require(
-                group.attrs["pse_initialisation"]
-                == "frozen-local strain-only O(Ro)",
+                group.attrs["pse_initialisation"] == "frozen-local strain-only O(Ro)",
                 f"n={mode}: the PSE initialisation does not match the appendix.",
             )
             require(
@@ -146,8 +145,7 @@ def validate_all(
         f"PSE n>=12 ensemble-mean 0--50 IP NRE is outside [{low}, {high}]%.",
     )
     require(
-        np.max(pse_50)
-        <= tolerance["pse_individual_nre_0_50ip_n_ge_12_percent_max"],
+        np.max(pse_50) <= tolerance["pse_individual_nre_0_50ip_n_ge_12_percent_max"],
         f"A PSE n>=12 0--50 IP mean NRE exceeds the individual-mode bound: "
         f"{np.max(pse_50):.4g}%.",
     )
@@ -172,6 +170,15 @@ def validate_all(
             f"n=4, 50-IP field maxima differ by {maximum_error:.4g}.",
         )
         time_10 = int(np.flatnonzero(times == 10.0)[0])
+        mode_1 = int(np.flatnonzero(modes == 1)[0])
+        maxima_n1_10ip = fields[time_10, mode_1].max(axis=(-2, -1))
+        reference_n1 = references["n1_10ip_squared_velocity_maxima"]
+        expected_n1 = np.asarray([reference_n1[name] for name in MODEL_NAMES])
+        maximum_error_n1 = float(np.max(np.abs(maxima_n1_10ip - expected_n1)))
+        require(
+            maximum_error_n1 <= tolerance["n1_10ip_squared_velocity_maxima_abs"],
+            f"n=1, 10-IP field maxima differ by {maximum_error_n1:.4g}.",
+        )
         mode_32 = int(np.flatnonzero(modes == 32)[0])
         pointwise = float(
             np.max(np.abs(fields[time_10, mode_32, 3] - fields[time_10, mode_32, 4]))
@@ -202,6 +209,10 @@ def validate_all(
                 zip(MODEL_NAMES, maxima.tolist(), strict=True)
             ),
             "n4_50ip_maxima_max_abs_error": maximum_error,
+            "n1_10ip_squared_velocity_maxima": dict(
+                zip(MODEL_NAMES, maxima_n1_10ip.tolist(), strict=True)
+            ),
+            "n1_10ip_maxima_max_abs_error": maximum_error_n1,
             "n32_10ip_pse_hbe_squared_velocity_pointwise_max": pointwise,
             "saved_field_nre_consistency_max_abs": nre_consistency,
         },

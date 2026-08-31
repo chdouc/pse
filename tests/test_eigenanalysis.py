@@ -87,3 +87,31 @@ def test_gaussian_vortex_uses_the_shared_manuscript_depth() -> None:
     )
 
     assert module.DOMAIN_DEPTH == DOMAIN_DEPTH == 2000.0
+
+
+def test_gaussian_vortex_lowest_trapped_frequency() -> None:
+    """Recompute a small Gaussian-vortex eigensystem as a CI regression."""
+    module = load_script(
+        "gaussian_vortex_regression_test",
+        "code/gaussian_vortex/compute_eigenanalysis.py",
+    )
+    reference = REFERENCE["gaussian_vortex_figure7"]
+    frequencies, _ = module.solve_eigensystem(
+        0,
+        basis_size=32,
+        radial_domain=10.0 * module.FLOW_LENGTH,
+        vertical_mode=reference["vertical_mode"],
+    )
+    index = module.lowest_frequency_index(
+        frequencies,
+        frequency_min=-0.5,
+        frequency_max=0.5,
+    )
+
+    assert np.isclose(
+        frequencies[index].real / module.CORIOLIS_FREQUENCY,
+        reference["frequencies_over_f"][0],
+        rtol=0.0,
+        atol=reference["absolute_tolerance"],
+    )
+    assert abs(frequencies[index].imag) <= 1.0e-12

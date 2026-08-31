@@ -4,28 +4,19 @@ from __future__ import annotations
 
 import numpy as np
 
+from common.paper_parameters import vertical_mode_wavenumber, vertical_wavelength
+
 
 def vertical_mode(z: np.ndarray, n: int, depth_m: float) -> np.ndarray:
     """Return the unnormalised mode Z_n(z)=cos(n*pi*z/H)."""
-    if n < 1:
-        raise ValueError("The baroclinic vertical-mode number must be positive.")
-    if depth_m <= 0.0:
-        raise ValueError("The domain depth must be positive.")
-    return np.cos(n * np.pi * np.asarray(z, dtype=float) / depth_m)
+    wavenumber = vertical_mode_wavenumber(n, depth_m)
+    return np.cos(wavenumber * np.asarray(z, dtype=float))
 
 
 def vertical_mode_derivative(z: np.ndarray, n: int, depth_m: float) -> np.ndarray:
     """Return the analytic vertical derivative of Z_n."""
-    return -(n * np.pi / depth_m) * np.sin(
-        n * np.pi * np.asarray(z, dtype=float) / depth_m
-    )
-
-
-def vertical_wavelength(n: int, depth_m: float) -> float:
-    """Return h=2H/n for the unnormalised cosine mode."""
-    if n < 1:
-        raise ValueError("The vertical-mode number must be positive.")
-    return 2.0 * depth_m / n
+    wavenumber = vertical_mode_wavenumber(n, depth_m)
+    return -wavenumber * np.sin(wavenumber * np.asarray(z, dtype=float))
 
 
 def mode_metadata(n: int, depth_m: float) -> dict[str, float | int | str]:
@@ -33,7 +24,7 @@ def mode_metadata(n: int, depth_m: float) -> dict[str, float | int | str]:
     return {
         "vertical_mode": n,
         "domain_depth_m": depth_m,
-        "vertical_wavenumber_m-1": n * np.pi / depth_m,
+        "vertical_wavenumber_m-1": vertical_mode_wavenumber(n, depth_m),
         "vertical_wavelength_m": vertical_wavelength(n, depth_m),
         "definition": "Z_n(z)=cos(n*pi*z/H)",
         "normalisation": "unnormalised",

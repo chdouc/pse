@@ -24,6 +24,8 @@ from specification import (
     NRE_MODEL_NAMES,
     simulation_configuration,
     simulation_signature,
+    simulation_source_inventory,
+    simulation_source_signature,
     validate_config,
 )
 from vertical_modes import mode_metadata, validate_vertical_mode
@@ -528,6 +530,12 @@ def create_simulation_file(
                 simulation_configuration(config), sort_keys=True
             )
             handle.attrs["simulation_signature_sha256"] = simulation_signature(config)
+            handle.attrs["simulation_source_inventory_json"] = json.dumps(
+                simulation_source_inventory(), sort_keys=True
+            )
+            handle.attrs["simulation_source_signature_sha256"] = (
+                simulation_source_signature()
+            )
             handle.attrs["model_names"] = json.dumps(MODEL_NAMES)
             handle.attrs["nre_model_names"] = json.dumps(NRE_MODEL_NAMES)
             handle.attrs["coordinate_convention"] = "x/L,y/L in [-pi,pi)"

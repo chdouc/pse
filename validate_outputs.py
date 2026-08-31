@@ -140,7 +140,9 @@ def validate_parallel_shear(specification: dict[str, Any]) -> None:
         ):
             raise ValueError("The Figure 5 branch frequencies changed.")
         if not np.all(np.diff(normalized_frequencies, axis=1) > 0.0):
-            raise ValueError("The Figure 5 branches are not in increasing-frequency order.")
+            raise ValueError(
+                "The Figure 5 branches are not in increasing-frequency order."
+            )
 
     metadata = validate_metadata(ROOT / specification["metadata"])
     if metadata.get("vertical_mode") != reference["vertical_mode"]:
@@ -440,9 +442,7 @@ def validate_polarisation_geometry_movie(
                 f"{preview.size}; expected {expected_preview_size}."
             )
 
-    caption = (output_directory / "movie1_caption.txt").read_text(
-        encoding="utf-8"
-    )
+    caption = (output_directory / "movie1_caption.txt").read_text(encoding="utf-8")
     if not caption.lower().startswith("movie 1."):
         raise ValueError("The caption is not explicitly titled movie 1.")
     if caption.count("$$") % 2:
@@ -450,10 +450,7 @@ def validate_polarisation_geometry_movie(
 
     render_module = load_script_module(
         "polarisation_movie_render",
-        ROOT
-        / "code"
-        / "polarisation_geometry"
-        / "render_polarisation_movie.py",
+        ROOT / "code" / "polarisation_geometry" / "render_polarisation_movie.py",
     )
     ffmpeg = render_module.locate_ffmpeg(None)
     movie_path = output_directory / specification["movie_filename"]
@@ -523,6 +520,82 @@ def validate_figures(specification: dict[str, Any]) -> None:
             path = stem.with_suffix(suffix)
             if not path.is_file() or path.stat().st_size == 0:
                 raise FileNotFoundError(f"Missing figure output: {path}")
+    for relative_path in specification.get("figure_metadata", []):
+        validate_wave_figure_metadata(ROOT / relative_path)
+
+
+def validate_wave_figure_metadata(path: Path) -> dict[str, Any]:
+    """Validate a Figure 9 or 10 color-limit and extrema sidecar."""
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing figure metadata: {path}")
+    metadata = json.loads(path.read_text(encoding="utf-8"))
+    if metadata.get("schema_version") != 1:
+        raise ValueError(f"Unsupported figure-metadata schema in {path}.")
+    if metadata.get("model_names") != REFERENCE_METRICS["model_names"]:
+        raise ValueError(f"The model order changed in {path}.")
+    target_time = metadata.get("target_time_in_inertial_periods")
+    if target_time not in (10.0, 50.0) or not path.stem.endswith(f"{target_time:g}IP"):
+        raise ValueError(f"The figure time is inconsistent in {path}.")
+    rows = metadata.get("rows")
+    if not isinstance(rows, list) or [row.get("vertical_mode") for row in rows] != [
+        1,
+        4,
+        8,
+        16,
+        32,
+    ]:
+        raise ValueError(f"The vertical-mode rows changed in {path}.")
+    for row in rows:
+        limits = np.asarray(row.get("color_limits"), dtype=float)
+        extrema = np.asarray(
+            [row.get("field_minimum"), row.get("field_maximum")], dtype=float
+        )
+        fractions = np.asarray(
+            [
+                row.get("below_color_limit_fraction"),
+                row.get("above_color_limit_fraction"),
+            ],
+            dtype=float,
+        )
+        if limits.shape != (2,) or not np.all(np.isfinite(limits)):
+            raise ValueError(f"Invalid color limits in {path}.")
+        if not limits[0] < limits[1]:
+            raise ValueError(f"Non-increasing color limits in {path}.")
+        if not np.all(np.isfinite(extrema)) or extrema[0] > extrema[1]:
+            raise ValueError(f"Invalid field extrema in {path}.")
+        if not np.all(np.isfinite(fractions)) or np.any(
+            (fractions < 0) | (fractions > 1)
+        ):
+            raise ValueError(f"Invalid clipped fractions in {path}.")
+        sample_count = row.get("sample_count")
+        below_count = row.get("below_color_limit_count")
+        above_count = row.get("above_color_limit_count")
+        if not all(
+            isinstance(value, int) for value in (sample_count, below_count, above_count)
+        ):
+            raise ValueError(f"Invalid sample counts in {path}.")
+        if sample_count <= 0 or below_count < 0 or above_count < 0:
+            raise ValueError(f"Invalid sample counts in {path}.")
+        if below_count + above_count > sample_count:
+            raise ValueError(f"Clipped counts exceed the sample count in {path}.")
+        model_extrema = row.get("model_extrema")
+        if not isinstance(model_extrema, dict) or set(model_extrema) != set(
+            metadata["model_names"]
+        ):
+            raise ValueError(f"Invalid model extrema in {path}.")
+        for extrema_by_model in model_extrema.values():
+            values = np.asarray(
+                [extrema_by_model.get("minimum"), extrema_by_model.get("maximum")],
+                dtype=float,
+            )
+            if not np.all(np.isfinite(values)) or values[0] > values[1]:
+                raise ValueError(f"Invalid model extrema in {path}.")
+        expected_fractions = np.asarray(
+            [below_count / sample_count, above_count / sample_count]
+        )
+        if not np.allclose(fractions, expected_fractions, rtol=0.0, atol=1.0e-15):
+            raise ValueError(f"Inconsistent clipped fractions in {path}.")
+    return metadata
 
 
 def validate_workflow(
@@ -613,9 +686,7 @@ def main() -> None:
             data_only=args.data_only,
             output_directory=args.output_directory,
             artifact_root=(
-                args.artifact_root.resolve()
-                if args.artifact_root is not None
-                else None
+                args.artifact_root.resolve() if args.artifact_root is not None else None
             ),
         )
 

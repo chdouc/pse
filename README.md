@@ -52,9 +52,9 @@ The full command uses three independent mode workers by default. Use
 python reproduce.py --all --reuse-simulation
 ```
 
-The reuse check compares a SHA-256 signature of all simulation-defining
-parameters. A mismatch stops the run. Omit `--reuse-simulation` to recompute
-from the equations.
+The reuse check compares SHA-256 signatures of all simulation-defining
+parameters and the solver source files. A missing or changed signature stops
+the run. Omit `--reuse-simulation` to recompute from the equations.
 
 Spatial and temporal refinement are checked with:
 
@@ -83,7 +83,7 @@ The source tree follows the background-flow cases rather than figure numbers.
 | Figures 4--5 | `python run_workflow.py parallel_shear --no-tex --validate` |
 | Figures 6--7 | `python run_workflow.py gaussian_vortex --no-tex --validate` |
 | Figures 8--10 and Movie 2 | `python reproduce.py --all` |
-| Movie 1 | `python run_workflow.py polarisation_geometry_movie --output-directory artifacts/movie1 --no-tex --validate` |
+| Movie 1 | `python run_workflow.py polarisation_geometry_movie --no-tex --validate` |
 
 Standalone workflows retain their case-specific default directories. To place
 all configured `artifacts/...` outputs below another disposable root, add
@@ -147,8 +147,8 @@ artifacts/reproduction/full/
 |   `-- sinusoidal_dipole_movie_fields.npz
 |-- figures/
 |   |-- figure8_error_statistics.{pdf,png}
-|   |-- sinusoidal_dipole_wave_velocity_10IP.{pdf,png}
-|   `-- sinusoidal_dipole_wave_velocity_50IP.{pdf,png}
+|   |-- sinusoidal_dipole_wave_velocity_10IP.{pdf,png,json}
+|   `-- sinusoidal_dipole_wave_velocity_50IP.{pdf,png,json}
 |-- movies/
 |   |-- movie2.mp4
 |   `-- movie2 validation and caption sidecars
@@ -159,6 +159,11 @@ artifacts/reproduction/full/
 The renderer keeps its captions, accessibility text and quality reports in the
 working output. The journal submission uses the MP4 files and a separate
 caption document.
+
+The Figure 9--10 JSON sidecars record each row's displayed colour limits,
+unclipped extrema and the number and fraction of samples outside the displayed
+range. This keeps the published rendering unchanged while making its robust
+quantile scaling and the fixed Figure 10 `n=4` range auditable.
 
 The validator stops with a nonzero exit code if a required check fails. It
 checks the manuscript grid and time step, modal boundary conditions, 136 NRE
@@ -172,7 +177,9 @@ tolerances.
 Each run writes a manifest containing the command, repository revision and
 worktree state, source-file hashes, configuration snapshots, package versions,
 runtime, peak combined resident memory, output inventory and SHA-256 checksums.
-A failed run also writes a manifest with the exception type and message.
+After output initialization, a failed calculation or validation also writes a
+manifest with the exception type and message. Argument and configuration
+errors raised before initialization exit explicitly without a run manifest.
 
 Run the unit and integration tests with:
 
@@ -182,8 +189,10 @@ python -m ruff check code tests reproduce.py run_workflow.py validate_outputs.py
 python -m pytest -q
 ```
 
-The same style checks, core numerical type checks, unit tests and smoke
-reproduction run automatically on each GitHub push and pull request.
+The same style checks, core numerical type checks, unit tests (including a
+Gaussian-vortex eigensystem regression) and smoke reproduction run
+automatically on each GitHub push and pull request. The complete reproduction
+is also available as a manually triggered GitHub Actions job.
 
 Files below `artifacts/` are disposable caches. Removing them does not remove a
 source input; the commands above regenerate the listed data and products.

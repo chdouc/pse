@@ -36,6 +36,7 @@
     "initial_reconstruction_relative_l2": 1e-10,
     "saved_field_nre_consistency_abs": 2e-6,
     "n4_50ip_squared_velocity_maxima_abs": 1.25,
+    "n1_10ip_squared_velocity_maxima_abs": 0.1,
     "n32_10ip_pse_hbe_squared_velocity_pointwise_max": 5e-4,
     "pse_mean_nre_0_10ip_n_ge_8_percent_max": 0.15,
     "scalar_mean_nre_0_10ip_n_ge_8_percent_range": [0.8, 2.2],

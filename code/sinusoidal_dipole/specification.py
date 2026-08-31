@@ -22,6 +22,12 @@ from common.paper_parameters import (  # noqa: E402
 )
 
 REFERENCE_METRICS_PATH = ROOT / "config" / "reference_metrics.json"
+SIMULATION_SOURCE_PATHS = (
+    ROOT / "code" / "common" / "paper_parameters.py",
+    ROOT / "code" / "sinusoidal_dipole" / "solver.py",
+    ROOT / "code" / "sinusoidal_dipole" / "specification.py",
+    ROOT / "code" / "sinusoidal_dipole" / "vertical_modes.py",
+)
 
 MODEL_NAMES = ("YBJ", "TSB", "YBJ+", "PSE", "HBEs")
 NRE_MODEL_NAMES = MODEL_NAMES[:-1]
@@ -79,7 +85,9 @@ def reference_metrics_from_config(config: dict[str, Any]) -> dict[str, Any]:
     try:
         path.relative_to(ROOT)
     except ValueError as error:
-        raise ValueError("reference_metrics_file must remain inside the repository.") from error
+        raise ValueError(
+            "reference_metrics_file must remain inside the repository."
+        ) from error
     return load_reference_metrics(path)
 
 
@@ -135,11 +143,17 @@ def validate_config(
         if int(config["random_seed"]) != 20260826:
             raise ValueError("Full reproduction requires the published random seed.")
         if physical != PAPER_PHYSICAL_PARAMETERS:
-            raise ValueError("Full reproduction requires the published physical parameters.")
+            raise ValueError(
+                "Full reproduction requires the published physical parameters."
+            )
         if numerical != PAPER_NUMERICAL_PARAMETERS:
-            raise ValueError("Full reproduction requires the published numerical parameters.")
+            raise ValueError(
+                "Full reproduction requires the published numerical parameters."
+            )
         if config["vertical_modes"] != PAPER_VERTICAL_MODES:
-            raise ValueError("Full reproduction requires the published vertical-mode sets.")
+            raise ValueError(
+                "Full reproduction requires the published vertical-mode sets."
+            )
         if config["saved_times_in_inertial_periods"] != PAPER_SAVED_TIMES:
             raise ValueError("Full reproduction requires the published saved times.")
 
@@ -160,6 +174,30 @@ def simulation_signature(config: dict[str, Any]) -> str:
     """Return a stable SHA-256 identity for all simulation-determining inputs."""
     payload = json.dumps(
         simulation_configuration(config),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def simulation_source_inventory() -> list[dict[str, str]]:
+    """Hash the source files that determine the simulation archive."""
+    return [
+        {
+            "path": path.relative_to(ROOT).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in SIMULATION_SOURCE_PATHS
+    ]
+
+
+def simulation_source_signature() -> str:
+    """Return a stable identity for the simulation implementation."""
+    payload = json.dumps(
+        {
+            "schema_version": 1,
+            "files": simulation_source_inventory(),
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
