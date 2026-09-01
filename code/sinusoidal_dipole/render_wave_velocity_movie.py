@@ -33,7 +33,11 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from common.files import sha256_file  # noqa: E402
+from common.files import (  # noqa: E402
+    executable_provenance,
+    executable_version,
+    sha256_file,
+)
 from common.video import mp4_has_faststart  # noqa: E402
 from plot_wave_velocity_fields import publication_style  # noqa: E402
 from specification import (  # noqa: E402
@@ -130,31 +134,6 @@ def resolve_executable(value: Path | None, name: str) -> Path:
     raise FileNotFoundError(
         f"{name} was not found. Pass --{name} with an executable path."
     )
-
-
-def executable_version(path: Path) -> str:
-    """Return the first non-empty line from a media executable's version output."""
-    result = subprocess.run(
-        [str(path), "-version"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    first_line = next((line.strip() for line in result.stdout.splitlines() if line), "")
-    if not first_line:
-        raise ValueError(f"Could not read version information from {path.name}.")
-    return first_line
-
-
-def executable_provenance(path: Path) -> dict[str, str]:
-    """Return portable version and checksum metadata for a media executable."""
-    return {
-        "filename": path.name,
-        "version": executable_version(path),
-        "sha256": sha256_file(path),
-    }
 
 
 def load_movie_data(path: Path) -> dict[str, Any]:

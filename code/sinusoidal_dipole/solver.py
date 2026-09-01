@@ -22,6 +22,8 @@ import numpy as np
 from specification import (
     MODEL_NAMES,
     NRE_MODEL_NAMES,
+    simulation_environment,
+    simulation_environment_signature,
     simulation_configuration,
     simulation_signature,
     simulation_source_inventory,
@@ -535,6 +537,12 @@ def create_simulation_file(
             )
             handle.attrs["simulation_source_signature_sha256"] = (
                 simulation_source_signature()
+            )
+            handle.attrs["simulation_environment_json"] = json.dumps(
+                simulation_environment(), sort_keys=True
+            )
+            handle.attrs["simulation_environment_signature_sha256"] = (
+                simulation_environment_signature()
             )
             handle.attrs["model_names"] = json.dumps(MODEL_NAMES)
             handle.attrs["nre_model_names"] = json.dumps(NRE_MODEL_NAMES)

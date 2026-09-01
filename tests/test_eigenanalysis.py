@@ -22,6 +22,10 @@ ROOT = Path(__file__).parents[1]
 REFERENCE = json.loads(
     (ROOT / "config" / "reference_metrics.json").read_text(encoding="utf-8")
 )
+REPRODUCTION_CONFIG = json.loads(
+    (ROOT / "config" / "reproduction.json").read_text(encoding="utf-8")
+)
+TOLERANCES = REPRODUCTION_CONFIG["validation_tolerances"]
 
 
 def load_script(name: str, relative_path: str) -> ModuleType:
@@ -74,7 +78,7 @@ def test_parallel_shear_figure5_branch_frequencies() -> None:
         normalized,
         np.asarray(reference["frequencies_over_f"]),
         rtol=0.0,
-        atol=reference["absolute_tolerance"],
+        atol=TOLERANCES["parallel_shear_frequency_over_f_abs"],
     )
     assert np.all(np.diff(normalized, axis=1) > 0.0)
 
@@ -112,6 +116,6 @@ def test_gaussian_vortex_lowest_trapped_frequency() -> None:
         frequencies[index].real / module.CORIOLIS_FREQUENCY,
         reference["frequencies_over_f"][0],
         rtol=0.0,
-        atol=reference["absolute_tolerance"],
+        atol=TOLERANCES["gaussian_vortex_frequency_over_f_abs"],
     )
     assert abs(frequencies[index].imag) <= 1.0e-12

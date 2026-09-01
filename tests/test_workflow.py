@@ -7,8 +7,10 @@ from pathlib import Path
 import imageio_ffmpeg
 import numpy as np
 import pytest
+from PIL import Image
 
 from reproduce import STATIC_WORKFLOWS
+from common.files import executable_provenance, validate_executable_provenance
 from common.spectrum_plotting import load_spectrum_colormap
 from plot_wave_velocity_fields import row_color_limits, row_color_metadata
 from render_wave_velocity_movie import resolve_executable
@@ -22,6 +24,9 @@ from validate_outputs import (
     REFERENCE_METRICS,
     REPRODUCTION_CONFIG,
     expected_wave_figure_rows,
+    load_script_module,
+    validate_background_flows,
+    validate_figure_stems,
     validate_sinusoidal_dipole_wave_path,
     validate_wave_figure_metadata,
 )
@@ -195,6 +200,8 @@ def test_wave_archive_maximum_tolerance_comes_from_configuration(
     fields = np.zeros((2, 5, 5, 1, 1))
     expected_by_name = REFERENCE_METRICS["n4_50ip_squared_velocity_maxima"]
     fields[1, 1, :, 0, 0] = [expected_by_name[name] + 0.5 for name in names]
+    active_config = copy.deepcopy(REPRODUCTION_CONFIG)
+    active_config["numerical_parameters"]["horizontal_grid"] = 1
     np.savez_compressed(
         path,
         times_in_inertial_periods=times,
@@ -202,16 +209,74 @@ def test_wave_archive_maximum_tolerance_comes_from_configuration(
         vertical_wavelengths_m=np.asarray([4000, 1000, 500, 250, 125]),
         model_names=names,
         squared_velocity=fields,
-        source_files=np.asarray(["simulation.h5"]),
+        source_files=np.asarray(["simulation.h5"] * 5),
     )
 
-    validate_sinusoidal_dipole_wave_path(path)
-    strict_config = copy.deepcopy(REPRODUCTION_CONFIG)
+    validate_sinusoidal_dipole_wave_path(path, active_config)
+    strict_config = copy.deepcopy(active_config)
     strict_config["validation_tolerances"][
         "n4_50ip_squared_velocity_maxima_abs"
     ] = 0.1
     with pytest.raises(ValueError, match="maxima"):
         validate_sinusoidal_dipole_wave_path(path, strict_config)
+
+
+def test_figure_validator_checks_png_decode_and_pdf_header(tmp_path: Path) -> None:
+    stem = tmp_path / "figure"
+    Image.new("RGB", (4, 3), "white").save(stem.with_suffix(".png"))
+    stem.with_suffix(".pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+
+    outputs = validate_figure_stems([stem])
+    assert outputs == [stem.with_suffix(".png"), stem.with_suffix(".pdf")]
+
+    stem.with_suffix(".pdf").write_bytes(b"not a PDF")
+    with pytest.raises(ValueError, match="invalid header"):
+        validate_figure_stems([stem])
+
+
+def test_background_flow_validator_recomputes_every_saved_field(
+    tmp_path: Path,
+) -> None:
+    workflow = load_workflow("background_flows", artifact_root=tmp_path)
+    specification = workflow["validation"]
+    data_path = Path(specification["data"])
+    metadata_path = Path(specification["metadata"])
+    data_path.parent.mkdir(parents=True)
+    module = load_script_module(
+        "background_flows_compute_test",
+        Path(__file__).parents[1]
+        / "code"
+        / "background_flows"
+        / "compute_background_flows.py",
+    )
+    arrays = module.compute_fields(
+        specification["grid_points"], specification["rossby_number"]
+    )
+    np.savez_compressed(data_path, **arrays)
+    metadata = {
+        "schema_version": 1,
+        "background_flow": "analytic examples used in Figure 3",
+        "flow_order": arrays["flow_names"].tolist(),
+        "coordinate_convention": "x/L and y/L in [-pi, pi)",
+        "rossby_number": specification["rossby_number"],
+        "fields": ["|U|/U_ref", "xi1/f", "xi2/f", "xi3/f"],
+        "sampling_line": "y/L=0",
+        "external_data": False,
+    }
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    validate_background_flows(specification)
+    arrays["velocity_u_over_reference"] = arrays[
+        "velocity_u_over_reference"
+    ].copy()
+    arrays["velocity_u_over_reference"][0, 0, 0] = 1.0
+    arrays["speed_over_reference"] = np.sqrt(
+        arrays["velocity_u_over_reference"] ** 2
+        + arrays["velocity_v_over_reference"] ** 2
+    )
+    np.savez_compressed(data_path, **arrays)
+    with pytest.raises(ValueError, match="velocity_u_over_reference"):
+        validate_background_flows(specification)
 
 
 def test_movie2_uses_bundled_ffmpeg_by_default(
@@ -227,3 +292,21 @@ def test_movie2_uses_bundled_ffmpeg_by_default(
     )
 
     assert resolve_executable(None, "ffmpeg") == bundled.resolve()
+
+
+def test_movie1_records_portable_ffmpeg_provenance() -> None:
+    executable = Path(imageio_ffmpeg.get_ffmpeg_exe())
+    record = executable_provenance(executable)
+
+    assert record["filename"] == executable.name
+    assert record["version"].lower().startswith("ffmpeg version")
+    assert len(record["sha256"]) == 64
+    validate_executable_provenance(record, label="FFmpeg")
+
+    invalid = {**record, "filename": str(executable)}
+    with pytest.raises(ValueError, match="Invalid FFmpeg provenance"):
+        validate_executable_provenance(invalid, label="FFmpeg")
+
+    nonportable = {**record, "path": str(executable)}
+    with pytest.raises(ValueError, match="Invalid FFmpeg provenance"):
+        validate_executable_provenance(nonportable, label="FFmpeg")

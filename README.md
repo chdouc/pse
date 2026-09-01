@@ -53,7 +53,8 @@ python reproduce.py --all --reuse-simulation
 ```
 
 The reuse check compares SHA-256 signatures of all simulation-defining
-parameters and the solver source files. A missing or changed signature stops
+parameters, the solver source files and the numerical runtime (Python, NumPy,
+h5py, operating system and machine type). A missing or changed signature stops
 the run. Omit `--reuse-simulation` to recompute from the equations.
 
 Spatial and temporal refinement are checked with:
@@ -95,9 +96,9 @@ toolchain is installed. The figure scripts save vector PDF and high-resolution P
 workflows encode H.264 MP4 files and check codec, pixel format, frame count,
 dimensions, duration, file size and representative decoded frames.
 The submitted Movie 2 target is 2560 x 1440 pixels at 24 frames per second.
-Movie 2 uses the FFmpeg executable bundled with the pinned `imageio-ffmpeg`
-package unless an explicit executable is supplied. Its portable filename,
-version string and SHA-256 checksum are recorded in the render manifest.
+Both movie workflows record the encoder's portable filename, version string
+and SHA-256 checksum. Movie 2 uses the FFmpeg executable bundled with the
+pinned `imageio-ffmpeg` package unless an explicit executable is supplied.
 
 ## Numerical specification
 
@@ -172,20 +173,25 @@ checking only the sidecar's internal consistency.
 
 The validator stops with a nonzero exit code if a required check fails. It
 checks the manuscript grid and time step, modal boundary conditions, 136 NRE
-statistics and their table structure, wave-archive structure, field maxima,
+statistics and their table identities, wave-archive dimensions and provenance,
+field maxima,
 the maximum pointwise PSE--HBE difference, agreement between saved fields and
 step-resolved NRE, the Figure 5 branch frequencies and order, the selected
-Figure 7 frequencies, and the complete Movie 2 decode.
+Figure 7 frequencies, recomputed Figure 3 analytic fields, decodable PNG and
+identifiable PDF outputs for Figures 1--10, and the complete Movie 2 decode.
 Reference values and tolerances remain separate: `reference_metrics.json`
 stores measured regression targets and `reproduction.json` stores acceptance
 tolerances.
 
-Each run writes a manifest containing the command, repository revision and
+Each run writes a manifest containing a portable command, repository revision and
 worktree state, source-file hashes, configuration snapshots, package versions,
 runtime, peak combined resident memory, output inventory and SHA-256 checksums.
-After output initialization, a failed calculation or validation also writes a
-manifest with the exception type and message. Argument and configuration
-errors raised before initialization exit explicitly without a run manifest.
+Machine-specific path arguments are replaced by repository-relative or
+`external/<name>` labels. After output initialization, `validation.json` is
+atomically changed to `running` and then replaced by the current success or
+failure report; a failed run also writes a manifest with the exception type and
+a path-sanitized message. Argument and configuration errors raised before
+initialization exit explicitly without a run manifest.
 
 Run the unit and integration tests with:
 
@@ -198,7 +204,9 @@ python -m pytest -q
 The same style checks, core numerical type checks, unit tests (including a
 Gaussian-vortex eigensystem regression) and smoke reproduction run
 automatically on each GitHub push and pull request. The complete reproduction
-is also available as a manually triggered GitHub Actions job.
+is also available as a manually triggered GitHub Actions job. Third-party
+Actions are pinned to immutable commits, and that job preserves its
+configuration, validation and manifest reports even after a failed run.
 
 Files below `artifacts/` are disposable caches. Removing them does not remove a
 source input; the commands above regenerate the listed data and products.

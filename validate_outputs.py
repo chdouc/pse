@@ -7,13 +7,20 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
+import warnings
 
 import numpy as np
 import pandas as pd
 from PIL import Image
 
 from run_workflow import ROOT, load_workflow, workflow_names
+
+CODE_ROOT = ROOT / "code"
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from common.files import validate_executable_provenance  # noqa: E402
 
 
 REFERENCE_METRICS = json.loads(
@@ -22,6 +29,7 @@ REFERENCE_METRICS = json.loads(
 REPRODUCTION_CONFIG = json.loads(
     (ROOT / "config" / "reproduction.json").read_text(encoding="utf-8")
 )
+VALIDATION_TOLERANCES = REPRODUCTION_CONFIG["validation_tolerances"]
 
 
 def require_keys(container: Any, keys: set[str], label: str) -> None:
@@ -139,7 +147,7 @@ def validate_parallel_shear(specification: dict[str, Any]) -> None:
             normalized_frequencies,
             expected_frequencies,
             rtol=0.0,
-            atol=reference["absolute_tolerance"],
+            atol=VALIDATION_TOLERANCES["parallel_shear_frequency_over_f_abs"],
         ):
             raise ValueError("The Figure 5 branch frequencies changed.")
         if not np.all(np.diff(normalized_frequencies, axis=1) > 0.0):
@@ -211,7 +219,9 @@ def validate_gaussian_vortex(specification: dict[str, Any]) -> None:
                 normalized,
                 expected,
                 rtol=0.0,
-                atol=reference["absolute_tolerance"],
+                atol=VALIDATION_TOLERANCES[
+                    "gaussian_vortex_frequency_over_f_abs"
+                ],
             ):
                 raise ValueError("The selected Gaussian-vortex frequencies changed.")
         else:
@@ -252,8 +262,44 @@ def validate_sinusoidal_dipole_error_path(path: Path) -> None:
         raise ValueError(f"Expected 136 error rows; found {table.shape[0]}.")
     if table.duplicated(["vertical_mode", "model", "window"]).any():
         raise ValueError("The error table contains duplicate model comparisons.")
-    if not np.allclose(table["background_velocity_m_s"], 0.25):
+    physical = REPRODUCTION_CONFIG["physical_parameters"]
+    expected_velocity = float(physical["background_velocity_m_s"])
+    expected_rossby = expected_velocity / (
+        float(physical["coriolis_frequency_s-1"])
+        * float(physical["background_length_scale_m"])
+    )
+    expected_wavelengths = (
+        2.0
+        * float(physical["domain_depth_m"])
+        / table["vertical_mode"].to_numpy()
+    )
+    if not np.allclose(
+        table["Ro"], expected_rossby, rtol=0.0, atol=np.finfo(float).eps
+    ):
+        raise ValueError("The Rossby number in the error table is inconsistent.")
+    if not np.allclose(
+        table["background_velocity_m_s"],
+        expected_velocity,
+        rtol=0.0,
+        atol=np.finfo(float).eps,
+    ):
         raise ValueError("The background velocity in the error table changed.")
+    if not np.allclose(
+        table["vertical_wavelength_m"],
+        expected_wavelengths,
+        rtol=2.0e-15,
+        atol=0.0,
+    ):
+        raise ValueError("The vertical wavelengths do not satisfy h=2H/n.")
+    if not np.allclose(
+        table["mean_error_percent"],
+        100.0 * table["mean_error"],
+        rtol=2.0e-15,
+        atol=1.0e-14,
+    ):
+        raise ValueError("mean_error_percent is inconsistent with mean_error.")
+    if set(table["source_file"]) != {"simulation.h5"}:
+        raise ValueError("The error-table source file changed.")
     for column in ("mean_error", "mean_error_percent"):
         values = table[column].to_numpy()
         require_finite(column, values)
@@ -291,8 +337,10 @@ def validate_sinusoidal_dipole_wave_path(
         require_keys(data.files, required, path.name)
         times = data["times_in_inertial_periods"]
         modes = data["vertical_modes"]
+        wavelengths = data["vertical_wavelengths_m"]
         names = data["model_names"]
         fields = data["squared_velocity"]
+        source_files = data["source_files"]
 
         if not np.array_equal(times, np.array([10.0, 50.0])):
             raise ValueError("The saved inertial-period times changed.")
@@ -301,12 +349,27 @@ def validate_sinusoidal_dipole_wave_path(
         expected_names = REFERENCE_METRICS["model_names"]
         if list(names) != expected_names:
             raise ValueError("The saved model order changed.")
-        if fields.ndim != 5 or fields.shape[:3] != (
+        expected_wavelengths = (
+            2.0
+            * float(active_config["physical_parameters"]["domain_depth_m"])
+            / modes
+        )
+        if not np.allclose(
+            wavelengths, expected_wavelengths, rtol=0.0, atol=1.0e-12
+        ):
+            raise ValueError("The wave archive does not satisfy h=2H/n.")
+        grid_points = int(active_config["numerical_parameters"]["horizontal_grid"])
+        expected_field_shape = (
             times.size,
             modes.size,
             names.size,
-        ):
+            grid_points,
+            grid_points,
+        )
+        if fields.shape != expected_field_shape:
             raise ValueError("The wave-field dimensions are inconsistent.")
+        if list(source_files) != ["simulation.h5"] * modes.size:
+            raise ValueError("The wave archive source-file inventory changed.")
         require_finite("squared_velocity", fields)
         if np.any(fields < 0.0):
             raise ValueError("squared_velocity contains negative values.")
@@ -342,13 +405,20 @@ def validate_background_flows(specification: dict[str, Any]) -> None:
         "sampled_v_over_reference_at_y0",
         "rossby_number",
     }
+    grid_points = int(specification["grid_points"])
+    rossby_number = float(specification["rossby_number"])
+    module = load_script_module(
+        "background_flows_compute_validation",
+        ROOT / "code" / "background_flows" / "compute_background_flows.py",
+    )
+    expected = module.compute_fields(grid_points, rossby_number)
     with np.load(path) as data:
         require_keys(data.files, required, path.name)
         coordinate = data["coordinate_over_length"]
         u = data["velocity_u_over_reference"]
         v = data["velocity_v_over_reference"]
         speed = data["speed_over_reference"]
-        if coordinate.ndim != 1 or not np.all(np.diff(coordinate) > 0.0):
+        if coordinate.shape != (grid_points,) or not np.all(np.diff(coordinate) > 0.0):
             raise ValueError("The Figure 3 coordinate must be strictly increasing.")
         expected_shape = (3, coordinate.size, coordinate.size)
         if u.shape != expected_shape or v.shape != expected_shape:
@@ -362,7 +432,22 @@ def validate_background_flows(specification: dict[str, Any]) -> None:
             require_finite(name, values)
         if not np.allclose(data["xi2_over_f"][[0, 2]], 0.0, atol=1e-15):
             raise ValueError("The shear and dipole normal strains must vanish.")
-    validate_metadata(ROOT / specification["metadata"])
+        for name, expected_values in expected.items():
+            if not np.array_equal(data[name], expected_values):
+                raise ValueError(f"The saved Figure 3 field changed: {name}.")
+    metadata = validate_metadata(ROOT / specification["metadata"])
+    expected_metadata = {
+        "schema_version": 1,
+        "background_flow": "analytic examples used in Figure 3",
+        "flow_order": expected["flow_names"].tolist(),
+        "coordinate_convention": "x/L and y/L in [-pi, pi)",
+        "rossby_number": rossby_number,
+        "fields": ["|U|/U_ref", "xi1/f", "xi2/f", "xi3/f"],
+        "sampling_line": "y/L=0",
+        "external_data": False,
+    }
+    if metadata != expected_metadata:
+        raise ValueError("The Figure 3 metadata changed.")
 
 
 VALIDATORS: dict[str, Callable[[dict[str, Any]], None]] = {
@@ -429,13 +514,22 @@ def validate_polarisation_geometry_movie(
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata["validation"]["status"] != "passed":
         raise ValueError("The saved mathematical-validation status is not passed.")
-
     if data_only:
         print(
             "polarisation_geometry_movie: mathematical validation passed "
             f"({len(metrics)} metrics)"
         )
         return
+
+    encoding_environment = metadata.get("encoding_environment")
+    if not isinstance(encoding_environment, dict) or set(encoding_environment) != {
+        "ffmpeg"
+    }:
+        raise ValueError("Movie 1 metadata lacks media-tool provenance.")
+    validate_executable_provenance(
+        encoding_environment["ffmpeg"],
+        label="Movie 1 FFmpeg",
+    )
 
     required = [
         specification["movie_filename"],
@@ -531,14 +625,35 @@ def validate_sinusoidal_dipole_movie(
     module.validate_product(input_path, output_directory)
 
 
-def validate_figures(specification: dict[str, Any]) -> None:
-    """Require PNG and PDF output for every configured figure stem."""
-    for relative_stem in specification.get("figure_stems", []):
-        stem = ROOT / relative_stem
+def validate_figure_stems(stems: Iterable[Path]) -> list[Path]:
+    """Require decodable PNG and identifiable PDF output for figure stems."""
+    outputs: list[Path] = []
+    for stem in stems:
         for suffix in (".png", ".pdf"):
             path = stem.with_suffix(suffix)
             if not path.is_file() or path.stat().st_size == 0:
                 raise FileNotFoundError(f"Missing figure output: {path}")
+            if suffix == ".png":
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+                    with Image.open(path) as image:
+                        if image.width < 1 or image.height < 1:
+                            raise ValueError(
+                                f"Figure PNG has invalid dimensions: {path}"
+                            )
+                        image.verify()
+            elif path.read_bytes()[:5] != b"%PDF-":
+                raise ValueError(f"Figure PDF has an invalid header: {path}")
+            outputs.append(path)
+    return outputs
+
+
+def validate_figures(specification: dict[str, Any]) -> None:
+    """Require PNG and PDF output for every configured figure stem."""
+    validate_figure_stems(
+        ROOT / relative_stem
+        for relative_stem in specification.get("figure_stems", [])
+    )
     data_path = ROOT / specification["data"]
     for relative_path in specification.get("figure_metadata", []):
         validate_wave_figure_metadata(ROOT / relative_path, data_path=data_path)

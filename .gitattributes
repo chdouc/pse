@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+*.h5 binary
+*.mat binary
+*.mp4 binary
+*.npz binary
+*.pdf binary
+*.png binary

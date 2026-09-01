@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
+import math
 from pathlib import Path
+import platform
 import sys
 from typing import Any
 
@@ -22,6 +25,7 @@ from common.paper_parameters import (  # noqa: E402
 )
 
 REFERENCE_METRICS_PATH = ROOT / "config" / "reference_metrics.json"
+REPRODUCTION_CONFIG_PATH = ROOT / "config" / "reproduction.json"
 SIMULATION_SOURCE_PATHS = (
     ROOT / "code" / "common" / "paper_parameters.py",
     ROOT / "code" / "sinusoidal_dipole" / "solver.py",
@@ -64,6 +68,30 @@ PAPER_SAVED_TIMES = {
     "movie_2_stop": 50,
     "movie_2_interval": 1,
 }
+SCALAR_VALIDATION_TOLERANCES = (
+    "vertical_mode_boundary_derivative_abs",
+    "vertical_mode_mean_abs",
+    "initial_reconstruction_relative_l2",
+    "saved_field_nre_consistency_abs",
+    "n4_50ip_squared_velocity_maxima_abs",
+    "n1_10ip_squared_velocity_maxima_abs",
+    "n32_10ip_pse_hbe_squared_velocity_pointwise_max",
+    "pse_mean_nre_0_10ip_n_ge_8_percent_max",
+    "pse_individual_nre_0_50ip_n_ge_12_percent_max",
+    "parallel_shear_frequency_over_f_abs",
+    "gaussian_vortex_frequency_over_f_abs",
+    "movie2_t50_squared_velocity_maxima_abs",
+    "movie2_static_frame_mean_adjacent_luma_mae_max",
+    "movie2_representative_psnr_db_min",
+)
+RANGE_VALIDATION_TOLERANCES = (
+    "scalar_mean_nre_0_10ip_n_ge_8_percent_range",
+    "pse_mean_nre_0_50ip_n_ge_12_percent_range",
+    "scalar_mean_nre_0_50ip_n_ge_12_percent_range",
+)
+REQUIRED_VALIDATION_TOLERANCES = frozenset(
+    (*SCALAR_VALIDATION_TOLERANCES, *RANGE_VALIDATION_TOLERANCES)
+)
 
 
 def load_reference_metrics(path: Path = REFERENCE_METRICS_PATH) -> dict[str, Any]:
@@ -73,6 +101,16 @@ def load_reference_metrics(path: Path = REFERENCE_METRICS_PATH) -> dict[str, Any
         raise ValueError(f"Unsupported reference-metrics schema in {path}.")
     if tuple(data["model_names"]) != MODEL_NAMES:
         raise ValueError(f"The model order in {path} is inconsistent.")
+    return data
+
+
+def load_reproduction_config(
+    path: Path = REPRODUCTION_CONFIG_PATH,
+) -> dict[str, Any]:
+    """Load the version-controlled reproduction configuration."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version") != 1:
+        raise ValueError(f"Unsupported reproduction-config schema in {path}.")
     return data
 
 
@@ -139,6 +177,48 @@ def validate_config(
             raise ValueError(f"physical_parameters.{key} must be positive.")
 
     reference_metrics_from_config(config)
+    tolerances = config["validation_tolerances"]
+    if not isinstance(tolerances, dict):
+        raise ValueError("validation_tolerances must be a mapping.")
+    minimum_tolerances = {
+        "vertical_mode_boundary_derivative_abs",
+        "vertical_mode_mean_abs",
+    }
+    required_tolerances = (
+        REQUIRED_VALIDATION_TOLERANCES
+        if manuscript_resolution
+        else minimum_tolerances
+    )
+    missing_tolerances = sorted(required_tolerances - set(tolerances))
+    if missing_tolerances:
+        raise ValueError(
+            "validation_tolerances is missing: " + ", ".join(missing_tolerances)
+        )
+    if manuscript_resolution:
+        unexpected_tolerances = sorted(set(tolerances) - REQUIRED_VALIDATION_TOLERANCES)
+        if unexpected_tolerances:
+            raise ValueError(
+                "validation_tolerances contains unsupported entries: "
+                + ", ".join(unexpected_tolerances)
+            )
+    for key in set(tolerances).intersection(SCALAR_VALIDATION_TOLERANCES):
+        value = float(tolerances[key])
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"validation_tolerances.{key} must be positive and finite.")
+    for key in set(tolerances).intersection(RANGE_VALIDATION_TOLERANCES):
+        value = tolerances[key]
+        if not isinstance(value, list) or len(value) != 2:
+            raise ValueError(f"validation_tolerances.{key} must contain two bounds.")
+        lower, upper = (float(item) for item in value)
+        if (
+            not math.isfinite(lower)
+            or not math.isfinite(upper)
+            or lower < 0.0
+            or upper < lower
+        ):
+            raise ValueError(
+                f"validation_tolerances.{key} must be a finite increasing range."
+            )
     if manuscript_resolution:
         if int(config["random_seed"]) != 20260826:
             raise ValueError("Full reproduction requires the published random seed.")
@@ -197,6 +277,32 @@ def simulation_source_signature() -> str:
         {
             "schema_version": 1,
             "files": simulation_source_inventory(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def simulation_environment() -> dict[str, str]:
+    """Record the runtime components that can change stored numerical fields."""
+    return {
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+        "byte_order": sys.byteorder,
+        "operating_system": platform.system(),
+        "machine": platform.machine(),
+        "numpy": importlib.metadata.version("numpy"),
+        "h5py": importlib.metadata.version("h5py"),
+    }
+
+
+def simulation_environment_signature() -> str:
+    """Return a stable identity for the simulation runtime environment."""
+    payload = json.dumps(
+        {
+            "schema_version": 1,
+            "environment": simulation_environment(),
         },
         sort_keys=True,
         separators=(",", ":"),

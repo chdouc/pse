@@ -19,8 +19,21 @@ from solver import (
     parameters_from_config,
 )
 from check_convergence import check_refinement, periodic_resample
-from reproduce import source_inventory, validate_reusable_simulation
-from specification import simulation_source_inventory, simulation_source_signature
+from reproduce import (
+    portable_command,
+    portable_message,
+    source_inventory,
+    validate_reusable_simulation,
+    write_validation_report,
+)
+from specification import (
+    load_reproduction_config,
+    simulation_environment,
+    simulation_environment_signature,
+    simulation_source_inventory,
+    simulation_source_signature,
+    validate_config,
+)
 
 
 def smoke_config() -> dict[str, Any]:
@@ -162,6 +175,12 @@ def test_solver_is_deterministic_and_self_consistent(tmp_path: Path) -> None:
             assert json.loads(handle.attrs["simulation_source_inventory_json"]) == (
                 simulation_source_inventory()
             )
+            assert handle.attrs["simulation_environment_signature_sha256"] == (
+                simulation_environment_signature()
+            )
+            assert json.loads(handle.attrs["simulation_environment_json"]) == (
+                simulation_environment()
+            )
     assert np.array_equal(outputs[0][0], outputs[1][0])
     assert np.array_equal(outputs[0][1], outputs[1][1])
 
@@ -207,6 +226,72 @@ def test_reuse_rejects_an_archive_without_source_provenance(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="no solver-source signature"):
         validate_reusable_simulation(path, config)
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_reuse_rejects_changed_or_missing_environment_provenance(
+    tmp_path: Path,
+    remove: bool,
+) -> None:
+    path = tmp_path / "simulation.h5"
+    config = smoke_config()
+    create_simulation_file(path, config, [4], {4: [0, 1]})
+    with h5py.File(path, "r+") as handle:
+        if remove:
+            del handle.attrs["simulation_environment_signature_sha256"]
+        else:
+            handle.attrs["simulation_environment_signature_sha256"] = "0" * 64
+
+    message = "no numerical-environment signature" if remove else "different numerical"
+    with pytest.raises(ValueError, match=message):
+        validate_reusable_simulation(path, config)
+
+
+def test_manifest_command_replaces_local_paths_with_portable_labels(
+    tmp_path: Path,
+) -> None:
+    local_output = tmp_path / "private-run"
+    command = portable_command(
+        ["--all", "--output-directory", str(local_output), "--workers=2"]
+    )
+
+    assert str(tmp_path) not in command
+    assert "external/private-run" in command
+
+
+def test_failure_message_replaces_repository_and_external_paths(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "private-config.json"
+    message = portable_message(
+        f"failed at {external} while running {Path(__file__).parents[1] / 'reproduce.py'}",
+        [external],
+    )
+
+    assert str(tmp_path) not in message
+    assert "external/private-config.json" in message
+    assert "./reproduce.py" in message
+
+
+def test_validation_report_replaces_a_stale_success_status(tmp_path: Path) -> None:
+    path = tmp_path / "validation.json"
+    path.write_text('{"status": "passed"}', encoding="utf-8")
+
+    write_validation_report(
+        tmp_path,
+        {"status": "failed", "error_type": "ValueError", "message": "test"},
+    )
+
+    assert json.loads(path.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_full_configuration_requires_every_named_acceptance_tolerance() -> None:
+    config = load_reproduction_config()
+    validate_config(config, manuscript_resolution=True)
+    del config["validation_tolerances"]["movie2_t50_squared_velocity_maxima_abs"]
+
+    with pytest.raises(ValueError, match="movie2_t50_squared_velocity_maxima_abs"):
+        validate_config(config, manuscript_resolution=True)
 
 
 def test_source_inventory_works_without_git(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,6 +27,8 @@
   ],
   "validation": {
     "type": "background_flows",
+    "grid_points": 256,
+    "rossby_number": 0.05,
     "data": "artifacts/background_flows/data/background_flows.npz",
     "metadata": "artifacts/background_flows/data/background_flows.json",
     "figure_stems": ["artifacts/background_flows/figures/background_flows"]

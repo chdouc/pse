@@ -34,6 +34,7 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+from common.files import executable_provenance  # noqa: E402
 from common.video import mp4_atom_offsets  # noqa: E402
 
 
@@ -2920,7 +2921,9 @@ def main() -> None:
     metadata["video"] = {
         **video,
         "expected_frame_count": total_frames,
-        "ffmpeg_build": Path(ffmpeg).name,
+    }
+    metadata["encoding_environment"] = {
+        "ffmpeg": executable_provenance(Path(ffmpeg)),
     }
     (
         initial_reference_marker,

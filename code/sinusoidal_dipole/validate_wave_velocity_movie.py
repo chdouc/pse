@@ -19,6 +19,7 @@ CODE_ROOT = Path(__file__).resolve().parents[1]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+from common.files import validate_executable_provenance  # noqa: E402
 from common.video import mp4_has_faststart  # noqa: E402
 from render_wave_velocity_movie import (  # noqa: E402
     JFM_PREPARING_URL,
@@ -33,11 +34,14 @@ from specification import (  # noqa: E402
     NRE_MODEL_NAMES as NRE_MODEL_NAME_TUPLE,
     PAPER_NUMERICAL_PARAMETERS,
     PAPER_PHYSICAL_PARAMETERS,
+    load_reproduction_config,
     load_reference_metrics,
 )
 
 
 REFERENCE_METRICS = load_reference_metrics()
+REPRODUCTION_CONFIG = load_reproduction_config()
+VALIDATION_TOLERANCES = REPRODUCTION_CONFIG["validation_tolerances"]
 MODEL_NAMES = list(MODEL_NAME_TUPLE)
 NRE_MODEL_NAMES = list(NRE_MODEL_NAME_TUPLE)
 EXPECTED_VERTICAL_MODES = np.asarray(REFERENCE_METRICS["movie2"]["vertical_modes"])
@@ -252,7 +256,9 @@ def check_archive(path: Path) -> dict[str, Any]:
             raise ValueError("Difference color limits are not exactly symmetric.")
         if np.any(difference_limits[:, 1] <= 0.0):
             raise ValueError("Difference color limits are not positive.")
-        if np.max(nre_differences) > 2.0e-6:
+        if np.max(nre_differences) > VALIDATION_TOLERANCES[
+            "saved_field_nre_consistency_abs"
+        ]:
             raise ValueError("Recomputed NRE values disagree with stored error data.")
         time_50 = int(np.flatnonzero(np.isclose(times, 50.0))[0])
         maxima = fields[:, time_50].max(axis=(-2, -1))
@@ -260,7 +266,9 @@ def check_archive(path: Path) -> dict[str, Any]:
             maxima,
             EXPECTED_T50_MAXIMA,
             rtol=0.0,
-            atol=0.6,
+            atol=VALIDATION_TOLERANCES[
+                "movie2_t50_squared_velocity_maxima_abs"
+            ],
         ):
             raise ValueError(
                 f"Mode-wise t=50 IP maxima changed: {maxima.tolist()}."
@@ -399,7 +407,9 @@ def measure_encoded_static_range(
             f"Decoded {frame_count} still frames; expected {expected_count}."
         )
     mean_adjacent_mae = float(np.mean(adjacent_mae))
-    if mean_adjacent_mae > 0.02:
+    if mean_adjacent_mae > VALIDATION_TOLERANCES[
+        "movie2_static_frame_mean_adjacent_luma_mae_max"
+    ]:
         raise ValueError(
             "Encoded chapter-end hold is not visually static: "
             f"mean adjacent luma MAE {mean_adjacent_mae:.6f}."
@@ -638,22 +648,7 @@ def check_render_outputs(
     }:
         raise ValueError("Render manifest lacks media-tool provenance.")
     for name, record in encoding_environment.items():
-        if not isinstance(record, dict):
-            raise ValueError(f"Invalid {name} provenance record.")
-        filename = record.get("filename")
-        version = record.get("version")
-        checksum = record.get("sha256")
-        if (
-            not isinstance(filename, str)
-            or not filename
-            or Path(filename).name != filename
-            or not isinstance(version, str)
-            or not version
-            or not isinstance(checksum, str)
-            or len(checksum) != 64
-            or any(character not in "0123456789abcdef" for character in checksum)
-        ):
-            raise ValueError(f"Invalid {name} provenance record.")
+        validate_executable_provenance(record, label=name)
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
     if not np.array_equal(
@@ -811,7 +806,9 @@ def check_render_outputs(
     if {item["label"] for item in qc} != required_labels:
         raise ValueError("Representative QC set changed.")
     minimum_psnr = min(float(item["psnr_db"]) for item in qc)
-    if minimum_psnr < 30.0:
+    if minimum_psnr < VALIDATION_TOLERANCES[
+        "movie2_representative_psnr_db_min"
+    ]:
         raise ValueError(f"Representative-frame PSNR is too low: {minimum_psnr:.2f}.")
 
     preview_dimensions = image_dimensions(output_directory / "movie2_preview.png")
