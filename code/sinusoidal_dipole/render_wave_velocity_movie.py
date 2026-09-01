@@ -13,6 +13,7 @@ from fractions import Fraction
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -113,20 +114,47 @@ def parse_resolution(value: str) -> tuple[int, int]:
 
 
 def resolve_executable(value: Path | None, name: str) -> Path:
-    """Resolve an explicit executable or one available on PATH."""
+    """Resolve an explicit tool, preferring bundled FFmpeg for encoding."""
     if value is not None:
         resolved = value.resolve()
         if not resolved.is_file():
             raise FileNotFoundError(f"{name} executable does not exist: {resolved}")
         return resolved
+    if name == "ffmpeg":
+        return Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
     discovered = shutil.which(name)
-    if discovered is None:
-        if name in {"ffmpeg", "ffprobe"}:
-            return Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
-        raise FileNotFoundError(
-            f"{name} was not found. Pass --{name} with an executable path."
-        )
-    return Path(discovered).resolve()
+    if discovered is not None:
+        return Path(discovered).resolve()
+    if name == "ffprobe":
+        return Path(imageio_ffmpeg.get_ffmpeg_exe()).resolve()
+    raise FileNotFoundError(
+        f"{name} was not found. Pass --{name} with an executable path."
+    )
+
+
+def executable_version(path: Path) -> str:
+    """Return the first non-empty line from a media executable's version output."""
+    result = subprocess.run(
+        [str(path), "-version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    first_line = next((line.strip() for line in result.stdout.splitlines() if line), "")
+    if not first_line:
+        raise ValueError(f"Could not read version information from {path.name}.")
+    return first_line
+
+
+def executable_provenance(path: Path) -> dict[str, str]:
+    """Return portable version and checksum metadata for a media executable."""
+    return {
+        "filename": path.name,
+        "version": executable_version(path),
+        "sha256": sha256_file(path),
+    }
 
 
 def load_movie_data(path: Path) -> dict[str, Any]:
@@ -759,6 +787,8 @@ def encode_video(
             "-an",
             "-c:v",
             "libx264",
+            "-profile:v",
+            "high",
             "-preset",
             "slow",
             "-crf",
@@ -825,7 +855,28 @@ def encode_video(
 
 def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
     """Return JSON media metadata from ffprobe."""
-    if "ffprobe" not in ffprobe.name.lower():
+    if not executable_version(ffprobe).lower().startswith("ffprobe version"):
+        result = subprocess.run(
+            [str(ffprobe), "-hide_banner", "-i", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        video_lines = [
+            line.strip() for line in result.stderr.splitlines() if "Video:" in line
+        ]
+        if len(video_lines) != 1:
+            raise ValueError(f"Expected one video stream; found {len(video_lines)}.")
+        video_line = video_lines[0]
+        profile_match = re.search(r"Video:\s+h264\s+\(([^)]+)\)", video_line)
+        pixel_match = re.search(r",\s*(yuv[0-9a-z]+)(?:\([^)]*\))?,", video_line)
+        if profile_match is None or pixel_match is None:
+            raise ValueError(
+                "Could not independently identify the H.264 profile and pixel "
+                f"format:\n{result.stderr}"
+            )
         reader = imageio_ffmpeg.read_frames(str(path), pix_fmt="rgb24")
         try:
             metadata = next(reader)
@@ -839,8 +890,8 @@ def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
                 {
                     "codec_type": "video",
                     "codec_name": metadata.get("codec", "h264"),
-                    "profile": "High",
-                    "pix_fmt": "yuv420p",
+                    "profile": profile_match.group(1),
+                    "pix_fmt": pixel_match.group(1),
                     "width": int(width),
                     "height": int(height),
                     "avg_frame_rate": f"{fps:g}/1",
@@ -848,7 +899,12 @@ def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
                     "nb_read_frames": str(int(frame_count)),
                     "nb_frames": str(int(frame_count)),
                     "duration": str(float(duration)),
-                }
+                },
+                *(
+                    [{"codec_type": "audio"}]
+                    if "Audio:" in result.stderr
+                    else []
+                ),
             ],
             "format": {
                 "filename": path.name,
@@ -856,7 +912,7 @@ def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
                 "size": str(path.stat().st_size),
                 "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
             },
-            "probe_backend": "imageio-ffmpeg",
+            "probe_backend": "ffmpeg+imageio-ffmpeg",
         }
     command = [
         str(ffprobe),
@@ -879,6 +935,7 @@ def probe_video(ffprobe: Path, path: Path) -> dict[str, Any]:
     probe = json.loads(result.stdout)
     if "format" in probe:
         probe["format"]["filename"] = path.name
+    probe["probe_backend"] = "ffprobe"
     return probe
 
 
@@ -1375,6 +1432,10 @@ def main() -> None:
     output_directory.mkdir(parents=True, exist_ok=True)
     ffmpeg = resolve_executable(args.ffmpeg, "ffmpeg")
     ffprobe = resolve_executable(args.ffprobe, "ffprobe")
+    encoding_environment = {
+        "ffmpeg": executable_provenance(ffmpeg),
+        "ffprobe": executable_provenance(ffprobe),
+    }
     data = load_movie_data(input_path)
     times = data["times_in_inertial_periods"]
     modes = data["vertical_modes"]
@@ -1555,6 +1616,7 @@ def main() -> None:
             },
             "selected_crf": selected_crf,
             "encoder": "libx264",
+            "encoding_environment": encoding_environment,
             "pixel_format": stream.get("pix_fmt"),
             "faststart": faststart,
             "audio_stream_count": len(

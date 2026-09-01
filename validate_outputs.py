@@ -19,6 +19,9 @@ from run_workflow import ROOT, load_workflow, workflow_names
 REFERENCE_METRICS = json.loads(
     (ROOT / "config" / "reference_metrics.json").read_text(encoding="utf-8")
 )
+REPRODUCTION_CONFIG = json.loads(
+    (ROOT / "config" / "reproduction.json").read_text(encoding="utf-8")
+)
 
 
 def require_keys(container: Any, keys: set[str], label: str) -> None:
@@ -220,9 +223,8 @@ def validate_gaussian_vortex(specification: dict[str, Any]) -> None:
     validate_vertical_mode_metadata(metadata, reference)
 
 
-def validate_sinusoidal_dipole_error(specification: dict[str, Any]) -> None:
-    """Validate the sinusoidal-dipole error table."""
-    path = ROOT / specification["data"]
+def validate_sinusoidal_dipole_error_path(path: Path) -> None:
+    """Validate a sinusoidal-dipole error table at an explicit path."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing calculation output: {path}")
 
@@ -259,11 +261,23 @@ def validate_sinusoidal_dipole_error(specification: dict[str, Any]) -> None:
             raise ValueError(f"{column} contains negative values.")
 
 
-def validate_sinusoidal_dipole_wave(specification: dict[str, Any]) -> None:
-    """Validate the sinusoidal-dipole wave-field archive."""
-    path = ROOT / specification["data"]
+def validate_sinusoidal_dipole_error(specification: dict[str, Any]) -> None:
+    """Validate the configured sinusoidal-dipole error table."""
+    validate_sinusoidal_dipole_error_path(ROOT / specification["data"])
+
+
+def validate_sinusoidal_dipole_wave_path(
+    path: Path,
+    config: dict[str, Any] | None = None,
+) -> None:
+    """Validate a sinusoidal-dipole wave-field archive at an explicit path."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing calculation output: {path}")
+
+    active_config = REPRODUCTION_CONFIG if config is None else config
+    maxima_tolerance = active_config["validation_tolerances"][
+        "n4_50ip_squared_velocity_maxima_abs"
+    ]
 
     required = {
         "times_in_inertial_periods",
@@ -302,8 +316,13 @@ def validate_sinusoidal_dipole_wave(specification: dict[str, Any]) -> None:
         maxima = fields[time_index, mode_index].max(axis=(-2, -1))
         expected_by_name = REFERENCE_METRICS["n4_50ip_squared_velocity_maxima"]
         expected = np.array([expected_by_name[name] for name in expected_names])
-        if not np.allclose(maxima, expected, rtol=0.0, atol=1.25):
+        if not np.allclose(maxima, expected, rtol=0.0, atol=maxima_tolerance):
             raise ValueError("The n=4 wave-field maxima at 50 IP changed.")
+
+
+def validate_sinusoidal_dipole_wave(specification: dict[str, Any]) -> None:
+    """Validate the configured sinusoidal-dipole wave-field archive."""
+    validate_sinusoidal_dipole_wave_path(ROOT / specification["data"])
 
 
 def validate_background_flows(specification: dict[str, Any]) -> None:
@@ -520,12 +539,71 @@ def validate_figures(specification: dict[str, Any]) -> None:
             path = stem.with_suffix(suffix)
             if not path.is_file() or path.stat().st_size == 0:
                 raise FileNotFoundError(f"Missing figure output: {path}")
+    data_path = ROOT / specification["data"]
     for relative_path in specification.get("figure_metadata", []):
-        validate_wave_figure_metadata(ROOT / relative_path)
+        validate_wave_figure_metadata(ROOT / relative_path, data_path=data_path)
 
 
-def validate_wave_figure_metadata(path: Path) -> dict[str, Any]:
-    """Validate a Figure 9 or 10 color-limit and extrema sidecar."""
+def expected_wave_figure_rows(
+    data_path: Path,
+    *,
+    target_time: float,
+) -> list[dict[str, object]]:
+    """Recompute Figure 9 or 10 row metadata from the numerical archive."""
+    if not data_path.is_file():
+        raise FileNotFoundError(f"Missing wave-field archive: {data_path}")
+    module = load_script_module(
+        "sinusoidal_dipole_wave_figure_metadata",
+        ROOT / "code" / "sinusoidal_dipole" / "plot_wave_velocity_fields.py",
+    )
+    with np.load(data_path) as data:
+        require_keys(
+            data.files,
+            {
+                "times_in_inertial_periods",
+                "vertical_modes",
+                "model_names",
+                "squared_velocity",
+            },
+            data_path.name,
+        )
+        times = data["times_in_inertial_periods"]
+        time_indices = np.flatnonzero(np.isclose(times, target_time))
+        if time_indices.size != 1:
+            raise ValueError(
+                f"Wave-field archive must contain one {target_time:g}-IP state."
+            )
+        vertical_modes = data["vertical_modes"]
+        model_names = data["model_names"]
+        fields = data["squared_velocity"][int(time_indices[0])]
+
+    rows: list[dict[str, object]] = []
+    for row_index, vertical_mode in enumerate(vertical_modes):
+        minimum, maximum, centered_on_one = module.row_color_limits(
+            fields[row_index],
+            target_time=target_time,
+            vertical_mode=int(vertical_mode),
+        )
+        rows.append(
+            module.row_color_metadata(
+                fields[row_index],
+                model_names,
+                target_time=target_time,
+                vertical_mode=int(vertical_mode),
+                minimum=minimum,
+                maximum=maximum,
+                centered_on_one=centered_on_one,
+            )
+        )
+    return rows
+
+
+def validate_wave_figure_metadata(
+    path: Path,
+    *,
+    data_path: Path | None = None,
+) -> dict[str, Any]:
+    """Validate a Figure 9 or 10 sidecar and optionally its source data."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing figure metadata: {path}")
     metadata = json.loads(path.read_text(encoding="utf-8"))
@@ -595,6 +673,15 @@ def validate_wave_figure_metadata(path: Path) -> dict[str, Any]:
         )
         if not np.allclose(fractions, expected_fractions, rtol=0.0, atol=1.0e-15):
             raise ValueError(f"Inconsistent clipped fractions in {path}.")
+    if data_path is not None:
+        expected_rows = expected_wave_figure_rows(
+            data_path,
+            target_time=float(target_time),
+        )
+        if rows != expected_rows:
+            raise ValueError(
+                f"Figure metadata does not match its wave-field archive: {path}."
+            )
     return metadata
 
 

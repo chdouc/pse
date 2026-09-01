@@ -95,6 +95,9 @@ toolchain is installed. The figure scripts save vector PDF and high-resolution P
 workflows encode H.264 MP4 files and check codec, pixel format, frame count,
 dimensions, duration, file size and representative decoded frames.
 The submitted Movie 2 target is 2560 x 1440 pixels at 24 frames per second.
+Movie 2 uses the FFmpeg executable bundled with the pinned `imageio-ffmpeg`
+package unless an explicit executable is supplied. Its portable filename,
+version string and SHA-256 checksum are recorded in the render manifest.
 
 ## Numerical specification
 
@@ -163,13 +166,16 @@ caption document.
 The Figure 9--10 JSON sidecars record each row's displayed colour limits,
 unclipped extrema and the number and fraction of samples outside the displayed
 range. This keeps the published rendering unchanged while making its robust
-quantile scaling and the fixed Figure 10 `n=4` range auditable.
+quantile scaling and the fixed Figure 10 `n=4` range auditable. Validation
+recomputes every sidecar row from the corresponding NPZ archive rather than
+checking only the sidecar's internal consistency.
 
 The validator stops with a nonzero exit code if a required check fails. It
 checks the manuscript grid and time step, modal boundary conditions, 136 NRE
-statistics, field maxima, the maximum pointwise PSE--HBE difference, agreement
-between saved fields and step-resolved NRE, the Figure 5 branch frequencies
-and order, the selected Figure 7 frequencies, and the complete Movie 2 decode.
+statistics and their table structure, wave-archive structure, field maxima,
+the maximum pointwise PSE--HBE difference, agreement between saved fields and
+step-resolved NRE, the Figure 5 branch frequencies and order, the selected
+Figure 7 frequencies, and the complete Movie 2 decode.
 Reference values and tolerances remain separate: `reference_metrics.json`
 stores measured regression targets and `reproduction.json` stores acceptance
 tolerances.

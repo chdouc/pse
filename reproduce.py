@@ -37,7 +37,11 @@ from specification import (  # noqa: E402
     validate_config,
 )
 from validate_reproduction import validate_all, validate_smoke  # noqa: E402
-from validate_outputs import validate_wave_figure_metadata  # noqa: E402
+from validate_outputs import (  # noqa: E402
+    validate_sinusoidal_dipole_error_path,
+    validate_sinusoidal_dipole_wave_path,
+    validate_wave_figure_metadata,
+)
 
 
 DEFAULT_CONFIG = ROOT / "config" / "reproduction.json"
@@ -397,6 +401,9 @@ def reproduce_all(
     movie_fields_path = data_directory / "sinusoidal_dipole_movie_fields.npz"
     save_npz(movie_fields_path, compute_archive(simulation_path))
 
+    validate_sinusoidal_dipole_error_path(error_path)
+    validate_sinusoidal_dipole_wave_path(wave_path, config)
+
     validation = validate_all(
         simulation_path,
         error_path,
@@ -404,6 +411,10 @@ def reproduce_all(
         movie_fields_path,
         config,
     )
+    validation["derived_data_structure"] = {
+        "error_statistics": "passed",
+        "wave_velocity_fields": "passed",
+    }
     validation["workflow_validations"] = workflow_validations
 
     run_command(
@@ -432,7 +443,7 @@ def reproduce_all(
         for time in config["saved_times_in_inertial_periods"]["figures_9_10"]
     ]
     for sidecar in wave_sidecars:
-        validate_wave_figure_metadata(sidecar)
+        validate_wave_figure_metadata(sidecar, data_path=wave_path)
     validation["wave_figure_metadata"] = {
         "status": "passed",
         "files": [repository_path(path) for path in wave_sidecars],

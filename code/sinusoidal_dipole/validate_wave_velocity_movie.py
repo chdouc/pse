@@ -627,8 +627,33 @@ def check_render_outputs(
             encoding="utf-8"
         )
     )
+    if manifest.get("schema_version") != 1:
+        raise ValueError("Unsupported Movie 2 render-manifest schema.")
     if manifest["product"] != "supplementary movie 2":
         raise ValueError("Render manifest product label changed.")
+    encoding_environment = manifest.get("encoding_environment")
+    if not isinstance(encoding_environment, dict) or set(encoding_environment) != {
+        "ffmpeg",
+        "ffprobe",
+    }:
+        raise ValueError("Render manifest lacks media-tool provenance.")
+    for name, record in encoding_environment.items():
+        if not isinstance(record, dict):
+            raise ValueError(f"Invalid {name} provenance record.")
+        filename = record.get("filename")
+        version = record.get("version")
+        checksum = record.get("sha256")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or Path(filename).name != filename
+            or not isinstance(version, str)
+            or not version
+            or not isinstance(checksum, str)
+            or len(checksum) != 64
+            or any(character not in "0123456789abcdef" for character in checksum)
+        ):
+            raise ValueError(f"Invalid {name} provenance record.")
     if manifest["physical_field_interpolation"]:
         raise ValueError("Render manifest reports physical-field interpolation.")
     if not np.array_equal(

@@ -67,7 +67,8 @@ The automated checks cover:
   or solver source;
 - NRE ranges, field maxima and a pointwise PSE--HBE field difference;
 - Figure 9--10 colour-limit sidecars containing the true extrema and clipped
-  sample fractions for every vertical-mode row;
+  sample fractions for every vertical-mode row, cross-checked against the
+  numerical archive;
 - consistency between saved complex fields and step-resolved NRE curves;
 - spatial and temporal refinement through `python reproduce.py
   --convergence-test`;
@@ -90,5 +91,7 @@ reconstruct each listed output without a research-data download.
 Floating-point roundoff can vary across operating systems and numerical
 libraries. Rendering fonts can also differ. The numerical tolerances allow
 roundoff while still rejecting a changed solution. The MP4 renderer uses the
-H.264 encoder bundled with the pinned `imageio-ffmpeg` package when a system
-FFmpeg executable is unavailable.
+H.264 encoder bundled with the pinned `imageio-ffmpeg` package by default. The
+Movie 2 render manifest records the encoder and probe executable filenames,
+version strings and SHA-256 checksums; explicit executable overrides remain
+available for controlled comparisons.
